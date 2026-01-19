@@ -5,7 +5,9 @@ import {
   BookingDto,
   CalendarsResponseDto,
   CreateBookingDto,
+  DeleteExternalBookingNoteDto,
   UpdateBookingDto,
+  UpsertExternalBookingNoteDto,
 } from './calendars.types';
 
 @Injectable()
@@ -54,7 +56,7 @@ export class CalendarsService {
       startDate: this.formatDate(row.start_date),
       endDate: this.formatDate(row.end_date),
       source: 'manual',
-      note: row.note,
+      note: row.note ?? null,
     };
   }
 
@@ -129,12 +131,37 @@ export class CalendarsService {
       startDate: this.formatDate(row.start_date),
       endDate: this.formatDate(row.end_date),
       source: 'manual',
-      note: row.note,
+      note: row.note ?? null,
     };
   }
 
   async deleteManualBooking(id: string): Promise<void> {
     await this.pool.query('DELETE FROM bookings_manual WHERE id = $1', [id]);
+  }
+
+  async upsertExternalBookingNote(dto: UpsertExternalBookingNoteDto): Promise<void> {
+    await this.pool.query(
+      `
+          INSERT INTO external_booking_notes (apartment_id, external_id, note, created_by)
+          VALUES ($1, $2, $3, $4)
+              ON CONFLICT (apartment_id, external_id)
+      DO UPDATE SET
+              note = EXCLUDED.note,
+                           created_by = EXCLUDED.created_by,
+                           updated_at = NOW()
+      `,
+      [dto.apartmentId, dto.externalId, dto.note, dto.createdBy || 'admin'],
+    );
+  }
+
+  async deleteExternalBookingNote(dto: DeleteExternalBookingNoteDto): Promise<void> {
+    await this.pool.query(
+      `
+          DELETE FROM external_booking_notes
+          WHERE apartment_id = $1 AND external_id = $2
+      `,
+      [dto.apartmentId, dto.externalId],
+    );
   }
 
   private async getApartmentCalendar(apartment: any): Promise<ApartmentCalendarDto> {
@@ -154,7 +181,7 @@ export class CalendarsService {
 
     const externalResult = await this.pool.query(
       `
-          SELECT id, start_date, end_date
+          SELECT id, external_id, start_date, end_date
           FROM bookings_external
           WHERE apartment_id = $1
           ORDER BY start_date
@@ -167,14 +194,22 @@ export class CalendarsService {
       startDate: this.formatDate(row.start_date),
       endDate: this.formatDate(row.end_date),
       source: 'manual',
-      note: row.note,
+      note: row.note ?? null,
     }));
+
+    const externalIdList: string[] = externalResult.rows
+      .map((r) => r.external_id)
+      .filter((v) => typeof v === 'string' && v.length > 0);
+
+    const externalNotesMap = await this.getExternalNotesMap(apartment.id, externalIdList);
 
     const externalBookings: BookingDto[] = externalResult.rows.map((row) => ({
       id: row.id,
+      externalId: row.external_id || undefined,
       startDate: this.formatDate(row.start_date),
       endDate: this.formatDate(row.end_date),
       source: 'external',
+      note: row.external_id ? externalNotesMap.get(row.external_id) ?? null : null,
     }));
 
     const allBookings = [...manualBookings, ...externalBookings].sort(
@@ -182,6 +217,31 @@ export class CalendarsService {
     );
 
     return { apartmentId: apartment.id, apartmentName: apartment.name, bookings: allBookings };
+  }
+
+  private async getExternalNotesMap(
+    apartmentId: string,
+    externalIds: string[],
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+
+    if (externalIds.length === 0) return map;
+
+    const res = await this.pool.query(
+      `
+          SELECT external_id, note
+          FROM external_booking_notes
+          WHERE apartment_id = $1
+            AND external_id = ANY($2::text[])
+      `,
+      [apartmentId, externalIds],
+    );
+
+    for (const row of res.rows) {
+      map.set(row.external_id, row.note);
+    }
+
+    return map;
   }
 
   private async assertNoOverlaps(params: {

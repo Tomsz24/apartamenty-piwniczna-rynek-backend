@@ -12,7 +12,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CalendarsService } from './calendars.service';
-import { CalendarsResponseDto, CreateBookingDto, UpdateBookingDto } from './calendars.types';
+import {
+  CalendarsResponseDto,
+  CreateBookingDto,
+  DeleteExternalBookingNoteDto,
+  UpdateBookingDto,
+  UpsertExternalBookingNoteDto,
+} from './calendars.types';
 import { IcalSyncService } from '../ical-sync/ical-sync.service';
 import { SupabaseAdminGuard } from '../auth/supabase-admin.guard';
 
@@ -55,5 +61,19 @@ export class CalendarsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteBooking(@Param('id') id: string): Promise<void> {
     return this.calendarsService.deleteManualBooking(id);
+  }
+
+  @Put('external-notes')
+  @UseGuards(SupabaseAdminGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async upsertExternalNote(@Body() dto: UpsertExternalBookingNoteDto): Promise<void> {
+    await this.calendarsService.upsertExternalBookingNote(dto);
+  }
+
+  @Delete('external-notes')
+  @UseGuards(SupabaseAdminGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteExternalNote(@Body() dto: DeleteExternalBookingNoteDto): Promise<void> {
+    await this.calendarsService.deleteExternalBookingNote(dto);
   }
 }

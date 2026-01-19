@@ -3,7 +3,8 @@ export interface BookingDto {
   startDate: string;
   endDate: string;
   source: 'manual' | 'external';
-  note?: string;
+  externalId?: string;
+  note?: string | null;
 }
 
 export interface ApartmentCalendarDto {
@@ -29,4 +30,16 @@ export interface UpdateBookingDto {
   startDate?: string;
   endDate?: string;
   note?: string;
+}
+
+export interface UpsertExternalBookingNoteDto {
+  apartmentId: string;
+  externalId: string;
+  note: string;
+  createdBy?: string;
+}
+
+export interface DeleteExternalBookingNoteDto {
+  apartmentId: string;
+  externalId: string;
 }
