@@ -1,8 +1,9 @@
 import { Injectable, Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { ConfigService } from '@nestjs/config';
 import * as ical from 'node-ical';
+import { classifyRangeCoverage } from '../reservations/reservations.domain';
 
 interface IcalEvent {
   uid: string;
@@ -71,7 +72,7 @@ export class IcalSyncService implements OnModuleInit {
       (event) => new Date(event.end) >= today,
     );
 
-    await this.saveExternalBookings(apartment.id, relevantEvents);
+    await this.saveAvailabilityObservations(apartment.id, relevantEvents);
   }
 
   /**
@@ -98,10 +99,10 @@ export class IcalSyncService implements OnModuleInit {
   }
 
   /**
-   * iCal jest sygnałem pomocniczym, a nie właścicielem rezerwacji.
-   * UID zapisujemy jako alias. Zniknięcie UID nigdy nie usuwa rezerwacji ani notatki.
+   * iCal jest tylko obserwacją zajętości Booking.com.
+   * Nie tworzy rezerwacji, nie przechowuje notatek i nie decyduje o tożsamości pobytu.
    */
-  private async saveExternalBookings(
+  private async saveAvailabilityObservations(
     apartmentId: string,
     events: IcalEvent[],
   ): Promise<void> {
@@ -116,154 +117,137 @@ export class IcalSyncService implements OnModuleInit {
       for (const event of events) {
         const startDate = this.formatDateLocal(event.start);
         const endDate = this.formatDateLocal(event.end);
-        const existingRef = await client.query(
+        const observationResult = await client.query(
           `
-            SELECT reservation_id
-            FROM reservation_source_refs
-            WHERE apartment_id = $1
-              AND source_system = 'booking_ical'
-              AND external_id = $2
-            FOR UPDATE
+            INSERT INTO ical_availability_observations (
+              apartment_id,
+              source_system,
+              external_id,
+              start_date,
+              end_date,
+              summary,
+              is_current,
+              first_seen_at,
+              last_seen_at,
+              missing_since,
+              raw_data
+            )
+            VALUES ($1, 'booking_ical', $2, $3, $4, $5, true, NOW(), NOW(), NULL, $6::jsonb)
+            ON CONFLICT (apartment_id, source_system, external_id) DO UPDATE SET
+              start_date = EXCLUDED.start_date,
+              end_date = EXCLUDED.end_date,
+              summary = EXCLUDED.summary,
+              is_current = true,
+              last_seen_at = NOW(),
+              missing_since = NULL,
+              raw_data = EXCLUDED.raw_data,
+              updated_at = NOW()
+            RETURNING id
           `,
-          [apartmentId, event.uid],
-        );
-
-        let reservationId: string | null = existingRef.rows[0]?.reservation_id ?? null;
-
-        if (!reservationId) {
-          reservationId = await this.findUniqueReservationMatch(client, {
+          [
             apartmentId,
+            event.uid,
             startDate,
             endDate,
-            currentUids,
-          });
-        }
+            event.summary ?? null,
+            JSON.stringify({ uid: event.uid, startDate, endDate, summary: event.summary ?? null }),
+          ],
+        );
 
-        if (!reservationId) {
-          const inserted = await client.query(
-            `
-              INSERT INTO reservations (
-                apartment_id,
-                origin,
-                status,
-                start_date,
-                end_date,
-                created_by,
-                last_seen_at,
-                metadata
-              )
-              VALUES ($1, 'booking_ical', 'confirmed', $2, $3, 'ical-sync', NOW(), $4::jsonb)
-              RETURNING id
-            `,
-            [
-              apartmentId,
-              startDate,
-              endDate,
-              JSON.stringify({ summary: event.summary ?? null }),
-            ],
-          );
-          reservationId = inserted.rows[0].id;
-        } else {
+        const observationId = observationResult.rows[0].id as string;
+        const matches = await this.findOverlappingReservations(client, apartmentId, startDate, endDate);
+        const coverage = classifyRangeCoverage(matches, startDate, endDate);
+        const matchStatus =
+          coverage === 'none'
+            ? 'unmatched'
+            : coverage === 'partial'
+              ? 'conflict'
+              : matches.length > 1
+                ? 'matched_multiple'
+                : 'matched_single';
+
+        await client.query(
+          `DELETE FROM ical_observation_reservation_matches WHERE observation_id = $1`,
+          [observationId],
+        );
+
+        for (const match of matches) {
           await client.query(
             `
-              UPDATE reservations
-              SET start_date = CASE WHEN origin = 'booking_ical' THEN $2::date ELSE start_date END,
-                  end_date = CASE WHEN origin = 'booking_ical' THEN $3::date ELSE end_date END,
-                  status = CASE
-                    WHEN origin = 'booking_ical' AND status = 'needs_review' THEN 'confirmed'
-                    ELSE status
-                  END,
-                  last_seen_at = NOW(),
-                  updated_at = CASE
-                    WHEN origin = 'booking_ical'
-                         AND (start_date <> $2::date OR end_date <> $3::date)
-                      THEN NOW()
-                    ELSE updated_at
-                  END,
-                  version = CASE
-                    WHEN origin = 'booking_ical'
-                         AND (start_date <> $2::date OR end_date <> $3::date)
-                      THEN version + 1
-                    ELSE version
-                  END
-              WHERE id = $1
+              INSERT INTO ical_observation_reservation_matches (
+                observation_id,
+                reservation_id,
+                match_type
+              )
+              VALUES ($1, $2, $3)
+              ON CONFLICT (observation_id, reservation_id) DO NOTHING
             `,
-            [reservationId, startDate, endDate],
+            [observationId, match.id, this.resolveMatchType(match, startDate, endDate)],
           );
         }
 
         await client.query(
           `
-            INSERT INTO reservation_source_refs (
-              reservation_id,
-              apartment_id,
-              source_system,
-              external_id,
-              is_current,
-              last_seen_at,
-              raw_data
-            )
-            VALUES ($1, $2, 'booking_ical', $3, true, NOW(), $4::jsonb)
-            ON CONFLICT (apartment_id, source_system, external_id) DO UPDATE SET
-              reservation_id = EXCLUDED.reservation_id,
-              is_current = true,
-              last_seen_at = NOW(),
-              missing_since = NULL,
-              raw_data = EXCLUDED.raw_data
+            UPDATE ical_availability_observations
+            SET match_status = $2,
+                matched_reservation_count = $3,
+                updated_at = NOW()
+            WHERE id = $1
           `,
-          [
-            reservationId,
-            apartmentId,
-            event.uid,
-            JSON.stringify({ startDate, endDate, summary: event.summary ?? null }),
-          ],
+          [observationId, matchStatus, matches.length],
         );
+
+        if (matchStatus === 'unmatched') {
+          await this.upsertReviewItem(client, {
+            dedupeKey: `ical_unmatched_block:${observationId}`,
+            apartmentId,
+            observationId,
+            kind: 'ical_unmatched_block',
+            severity: 'warning',
+            title: 'Blokada iCal bez rezerwacji w systemie',
+            details: { externalId: event.uid, startDate, endDate, summary: event.summary ?? null },
+          });
+        } else if (matchStatus === 'conflict') {
+          await this.upsertReviewItem(client, {
+            dedupeKey: `ical_observation_conflict:${observationId}`,
+            apartmentId,
+            observationId,
+            kind: 'ical_observation_conflict',
+            severity: 'critical',
+            title: 'Blokada iCal tylko częściowo pasuje do rezerwacji',
+            details: {
+              externalId: event.uid,
+              startDate,
+              endDate,
+              summary: event.summary ?? null,
+              matchedReservationIds: matches.map((match) => match.id),
+            },
+          });
+        } else {
+          await this.resolveReviewItems(client, [
+            `ical_unmatched_block:${observationId}`,
+            `ical_observation_conflict:${observationId}`,
+          ]);
+        }
       }
 
       await client.query(
         `
-          UPDATE reservation_source_refs AS refs
+          UPDATE ical_availability_observations
           SET is_current = false,
-              missing_since = COALESCE(refs.missing_since, NOW())
-          FROM reservations AS reservation
-          WHERE refs.reservation_id = reservation.id
-            AND refs.apartment_id = $1
-            AND refs.source_system = 'booking_ical'
-            AND reservation.end_date >= CURRENT_DATE
-            AND NOT (refs.external_id = ANY($2::text[]))
+              missing_since = COALESCE(missing_since, NOW()),
+              match_status = 'stale',
+              updated_at = NOW()
+          WHERE apartment_id = $1
+            AND source_system = 'booking_ical'
+            AND is_current = true
+            AND end_date >= CURRENT_DATE
+            AND NOT (external_id = ANY($2::text[]))
         `,
         [apartmentId, currentUids],
       );
 
-      // Po dwóch pełnych cyklach synchronizacji zgłaszamy brak do weryfikacji.
-      // Nadal niczego nie anulujemy ani nie kasujemy automatycznie.
-      await client.query(
-        `
-          UPDATE reservations AS reservation
-          SET status = 'needs_review',
-              updated_at = NOW(),
-              version = version + 1
-          WHERE reservation.apartment_id = $1
-            AND reservation.origin = 'booking_ical'
-            AND reservation.status = 'confirmed'
-            AND reservation.end_date >= CURRENT_DATE
-            AND EXISTS (
-              SELECT 1
-              FROM reservation_source_refs AS missing_ref
-              WHERE missing_ref.reservation_id = reservation.id
-                AND missing_ref.source_system = 'booking_ical'
-                AND missing_ref.is_current = false
-                AND missing_ref.missing_since <= NOW() - INTERVAL '60 minutes'
-            )
-            AND NOT EXISTS (
-              SELECT 1
-              FROM reservation_source_refs AS current_ref
-              WHERE current_ref.reservation_id = reservation.id
-                AND current_ref.is_current = true
-            )
-        `,
-        [apartmentId],
-      );
+      await this.syncReservationCoverageAlerts(client, apartmentId);
 
       await client.query('COMMIT');
     } catch (error) {
@@ -274,49 +258,172 @@ export class IcalSyncService implements OnModuleInit {
     }
   }
 
-  private async findUniqueReservationMatch(
-    client: import('pg').PoolClient,
-    params: {
-      apartmentId: string;
-      startDate: string;
-      endDate: string;
-      currentUids: string[];
-    },
-  ): Promise<string | null> {
-    const candidates = await client.query(
+  private async findOverlappingReservations(
+    client: PoolClient,
+    apartmentId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<Array<{ id: string; startDate: string; endDate: string }>> {
+    const result = await client.query(
       `
-        SELECT reservation.id,
-               reservation.start_date,
-               reservation.end_date
+        SELECT id, start_date, end_date
         FROM reservations AS reservation
         WHERE reservation.apartment_id = $1
-          AND reservation.origin <> 'manual'
           AND reservation.status <> 'cancelled'
           AND reservation.start_date < $3::date
           AND reservation.end_date > $2::date
+        ORDER BY reservation.start_date, reservation.end_date, reservation.created_at
+      `,
+      [apartmentId, startDate, endDate],
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      startDate: this.formatDateLocal(row.start_date),
+      endDate: this.formatDateLocal(row.end_date),
+    }));
+  }
+
+  private resolveMatchType(
+    reservation: { startDate: string; endDate: string },
+    observationStart: string,
+    observationEnd: string,
+  ): 'exact' | 'covered_by' | 'overlap' {
+    if (reservation.startDate === observationStart && reservation.endDate === observationEnd) {
+      return 'exact';
+    }
+    if (reservation.startDate <= observationStart && reservation.endDate >= observationEnd) {
+      return 'covered_by';
+    }
+    return 'overlap';
+  }
+
+  private async upsertReviewItem(
+    client: PoolClient,
+    params: {
+      dedupeKey: string;
+      apartmentId: string;
+      observationId?: string;
+      reservationId?: string;
+      kind:
+        | 'ical_unmatched_block'
+        | 'ical_observation_conflict'
+        | 'reservation_missing_in_ical';
+      severity: 'warning' | 'critical';
+      title: string;
+      details: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    await client.query(
+      `
+        INSERT INTO reservation_review_items (
+          dedupe_key,
+          apartment_id,
+          reservation_id,
+          observation_id,
+          kind,
+          severity,
+          status,
+          title,
+          details
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8::jsonb)
+        ON CONFLICT (dedupe_key) DO UPDATE SET
+          apartment_id = EXCLUDED.apartment_id,
+          reservation_id = EXCLUDED.reservation_id,
+          observation_id = EXCLUDED.observation_id,
+          kind = EXCLUDED.kind,
+          severity = EXCLUDED.severity,
+          status = 'open',
+          title = EXCLUDED.title,
+          details = EXCLUDED.details,
+          last_seen_at = NOW(),
+          resolved_at = NULL,
+          updated_at = NOW()
+      `,
+      [
+        params.dedupeKey,
+        params.apartmentId,
+        params.reservationId ?? null,
+        params.observationId ?? null,
+        params.kind,
+        params.severity,
+        params.title,
+        JSON.stringify(params.details),
+      ],
+    );
+  }
+
+  private async resolveReviewItems(client: PoolClient, dedupeKeys: string[]): Promise<void> {
+    if (dedupeKeys.length === 0) return;
+    await client.query(
+      `
+        UPDATE reservation_review_items
+        SET status = 'resolved',
+            resolved_at = NOW(),
+            updated_at = NOW()
+        WHERE dedupe_key = ANY($1::text[])
+          AND status = 'open'
+      `,
+      [dedupeKeys],
+    );
+  }
+
+  private async syncReservationCoverageAlerts(
+    client: PoolClient,
+    apartmentId: string,
+  ): Promise<void> {
+    const missingResult = await client.query(
+      `
+        SELECT reservation.id, reservation.start_date, reservation.end_date
+        FROM reservations AS reservation
+        WHERE reservation.apartment_id = $1
+          AND reservation.origin = 'booking_email'
+          AND reservation.status <> 'cancelled'
+          AND reservation.end_date >= CURRENT_DATE
           AND NOT EXISTS (
             SELECT 1
-            FROM reservation_source_refs AS seen_ref
-            WHERE seen_ref.reservation_id = reservation.id
-              AND seen_ref.source_system = 'booking_ical'
-              AND seen_ref.external_id = ANY($4::text[])
+            FROM ical_availability_observations AS observation
+            WHERE observation.apartment_id = reservation.apartment_id
+              AND observation.source_system = 'booking_ical'
+              AND observation.is_current = true
+              AND observation.start_date <= reservation.start_date
+              AND observation.end_date >= reservation.end_date
           )
-        ORDER BY
-          (reservation.start_date = $2::date AND reservation.end_date = $3::date) DESC,
-          reservation.updated_at DESC
       `,
-      [params.apartmentId, params.startDate, params.endDate, params.currentUids],
+      [apartmentId],
     );
 
-    const exact = candidates.rows.filter(
-      (row) =>
-        this.formatDateLocal(row.start_date) === params.startDate &&
-        this.formatDateLocal(row.end_date) === params.endDate,
-    );
-    if (exact.length === 1) return exact[0].id;
-    if (exact.length > 1) return null;
+    const missingKeys: string[] = [];
+    for (const row of missingResult.rows) {
+      const startDate = this.formatDateLocal(row.start_date);
+      const endDate = this.formatDateLocal(row.end_date);
+      const dedupeKey = `reservation_missing_in_ical:${row.id}`;
+      missingKeys.push(dedupeKey);
+      await this.upsertReviewItem(client, {
+        dedupeKey,
+        apartmentId,
+        reservationId: row.id,
+        kind: 'reservation_missing_in_ical',
+        severity: 'warning',
+        title: 'Rezerwacja Booking z maila nie jest widoczna w iCal',
+        details: { startDate, endDate },
+      });
+    }
 
-    return candidates.rows.length === 1 ? candidates.rows[0].id : null;
+    await client.query(
+      `
+        UPDATE reservation_review_items
+        SET status = 'resolved',
+            resolved_at = NOW(),
+            updated_at = NOW()
+        WHERE apartment_id = $1
+          AND kind = 'reservation_missing_in_ical'
+          AND status = 'open'
+          AND NOT (dedupe_key = ANY($2::text[]))
+      `,
+      [apartmentId, missingKeys],
+    );
   }
 
   /**

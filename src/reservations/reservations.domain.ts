@@ -39,3 +39,43 @@ export function selectUniqueDateMatch<T extends { startDate: string; endDate: st
 
   return exactMatches.length === 1 ? exactMatches[0] : null;
 }
+
+export type RangeCoverage = 'none' | 'exact_single' | 'covered' | 'partial';
+
+export function classifyRangeCoverage<T extends { startDate: string; endDate: string }>(
+  candidates: T[],
+  startDate: string,
+  endDate: string,
+): RangeCoverage {
+  const overlaps = candidates
+    .filter((candidate) =>
+      rangesOverlap(candidate.startDate, candidate.endDate, startDate, endDate),
+    )
+    .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
+
+  if (overlaps.length === 0) return 'none';
+
+  if (
+    overlaps.length === 1 &&
+    overlaps[0].startDate === startDate &&
+    overlaps[0].endDate === endDate
+  ) {
+    return 'exact_single';
+  }
+
+  let coveredUntil: string | null = null;
+  for (const range of overlaps) {
+    if (coveredUntil === null) {
+      if (range.startDate > startDate) return 'partial';
+      coveredUntil = range.endDate;
+    } else if (range.startDate <= coveredUntil) {
+      if (range.endDate > coveredUntil) coveredUntil = range.endDate;
+    } else {
+      return 'partial';
+    }
+
+    if (coveredUntil >= endDate) return 'covered';
+  }
+
+  return 'partial';
+}

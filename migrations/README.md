@@ -6,6 +6,21 @@ która z nich korzysta. Każdy plik jest przygotowany tak, aby nie usuwać tabel
 Pierwsza migracja tworzy wspólny model rezerwacji i kopiuje dane z
 `bookings_manual`, `bookings_external` oraz `external_booking_notes`.
 
+Druga migracja dodaje brakujący indeks dla ręcznego przypisywania osieroconych
+notatek.
+
+Trzecia migracja podporządkowuje bazę nowej strategii źródeł:
+
+- maile Booking.com są przyszłym źródłem prawdy dla rezerwacji,
+- ręczne wpisy w panelu są źródłem prawdy dla blokad i notatek,
+- iCal jest wyłącznie obserwacją zajętości i trafia do osobnych tabel.
+
+Czwarta migracja dodaje fundament pod powiadomienia push i inne alerty:
+
+- urządzenia administratorów,
+- zdarzenia powiadomień,
+- próby dostarczenia na konkretne urządzenia.
+
 Przed uruchomieniem na produkcji:
 
 1. wykonaj kopię bazy,

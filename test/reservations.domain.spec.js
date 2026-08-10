@@ -5,6 +5,7 @@ const { plainToInstance } = require('class-transformer');
 const { validate } = require('class-validator');
 const { CreateReservationDto } = require('../dist/reservations/reservations.dto');
 const {
+  classifyRangeCoverage,
   isValidIsoDate,
   rangesOverlap,
   selectUniqueDateMatch,
@@ -38,6 +39,32 @@ test('matches a changed source identifier only when dates identify one reservati
       '2026-08-12',
     ),
     null,
+  );
+});
+
+test('classifies one iCal block covering adjacent real reservations', () => {
+  assert.equal(
+    classifyRangeCoverage(
+      [
+        { startDate: '2026-08-10', endDate: '2026-08-12' },
+        { startDate: '2026-08-12', endDate: '2026-08-15' },
+      ],
+      '2026-08-10',
+      '2026-08-15',
+    ),
+    'covered',
+  );
+
+  assert.equal(
+    classifyRangeCoverage(
+      [
+        { startDate: '2026-08-10', endDate: '2026-08-11' },
+        { startDate: '2026-08-13', endDate: '2026-08-15' },
+      ],
+      '2026-08-10',
+      '2026-08-15',
+    ),
+    'partial',
   );
 });
 
