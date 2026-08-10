@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
 import {
   ApartmentCalendarDto,
@@ -9,22 +9,30 @@ import {
   UpdateBookingDto,
   UpsertExternalBookingNoteDto,
 } from './calendars.types';
+import { ReservationsService } from '../reservations/reservations.service';
+import { ReservationActor, ReservationDto } from '../reservations/reservations.types';
 
 @Injectable()
 export class CalendarsService {
-  constructor(@Inject('PG_POOL') private readonly pool: Pool) {}
+  constructor(
+    @Inject('PG_POOL') private readonly pool: Pool,
+    private readonly reservationsService: ReservationsService,
+  ) {}
 
   async getAllCalendars(): Promise<CalendarsResponseDto> {
     const apartmentsResult = await this.pool.query(`
-        SELECT id, name, description
-        FROM apartments
-        ORDER BY name
+      SELECT id, name
+      FROM apartments
+      ORDER BY name
     `);
 
     const apartments = apartmentsResult.rows;
-
-    const goryApartment = apartments.find((a) => a.name.toLowerCase().includes('góry'));
-    const rynekApartment = apartments.find((a) => a.name.toLowerCase().includes('rynek'));
+    const goryApartment = apartments.find((apartment) =>
+      apartment.name.toLowerCase().includes('góry'),
+    );
+    const rynekApartment = apartments.find((apartment) =>
+      apartment.name.toLowerCase().includes('rynek'),
+    );
 
     const [goryCalendar, rynekCalendar] = await Promise.all([
       this.getApartmentCalendar(goryApartment),
@@ -34,134 +42,41 @@ export class CalendarsService {
     return { gory: goryCalendar, rynek: rynekCalendar };
   }
 
-  async createManualBooking(dto: CreateBookingDto): Promise<BookingDto> {
-    await this.assertNoOverlaps({
+  async createManualBooking(
+    dto: CreateBookingDto,
+    actor: ReservationActor,
+  ): Promise<BookingDto> {
+    const reservation = await this.reservationsService.createManual(dto, actor);
+    return this.mapBooking(reservation, true);
+  }
+
+  async updateManualBooking(
+    id: string,
+    dto: UpdateBookingDto,
+    actor: ReservationActor,
+  ): Promise<BookingDto> {
+    const reservation = await this.reservationsService.update(id, dto, actor);
+    return this.mapBooking(reservation, true);
+  }
+
+  async deleteManualBooking(id: string, actor: ReservationActor): Promise<void> {
+    await this.reservationsService.cancelManual(id, actor);
+  }
+
+  async upsertExternalBookingNote(
+    dto: UpsertExternalBookingNoteDto,
+    actor: ReservationActor,
+  ): Promise<void> {
+    await this.reservationsService.upsertNoteByExternalId({
       apartmentId: dto.apartmentId,
-      startDate: dto.startDate,
-      endDate: dto.endDate,
+      externalId: dto.externalId,
+      note: dto.note,
+      createdBy: actor.email,
     });
-
-    const result = await this.pool.query(
-      `
-          INSERT INTO bookings_manual (apartment_id, start_date, end_date, note, created_by)
-          VALUES ($1, $2, $3, $4, $5)
-              RETURNING id, start_date, end_date, note
-      `,
-      [dto.apartmentId, dto.startDate, dto.endDate, dto.note || null, dto.createdBy || 'admin'],
-    );
-
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      startDate: this.formatDate(row.start_date),
-      endDate: this.formatDate(row.end_date),
-      source: 'manual',
-      note: row.note ?? null,
-    };
-  }
-
-  async updateManualBooking(id: string, dto: UpdateBookingDto): Promise<BookingDto> {
-    const existing = await this.pool.query(
-      `
-          SELECT apartment_id, start_date, end_date
-          FROM bookings_manual
-          WHERE id = $1
-      `,
-      [id],
-    );
-
-    if (existing.rows.length === 0) {
-      throw new Error('Booking not found');
-    }
-
-    const apartmentId = existing.rows[0].apartment_id as string;
-    const currentStart = this.formatDate(existing.rows[0].start_date);
-    const currentEnd = this.formatDate(existing.rows[0].end_date);
-
-    const nextStart = dto.startDate ?? currentStart;
-    const nextEnd = dto.endDate ?? currentEnd;
-
-    await this.assertNoOverlaps({
-      apartmentId,
-      startDate: nextStart,
-      endDate: nextEnd,
-      excludeManualBookingId: id,
-    });
-
-    const updates: string[] = [];
-    const values: any[] = [];
-    let paramIndex = 1;
-
-    if (dto.startDate) {
-      updates.push(`start_date = $${paramIndex++}`);
-      values.push(dto.startDate);
-    }
-
-    if (dto.endDate) {
-      updates.push(`end_date = $${paramIndex++}`);
-      values.push(dto.endDate);
-    }
-
-    if (dto.note !== undefined) {
-      updates.push(`note = $${paramIndex++}`);
-      values.push(dto.note);
-    }
-
-    updates.push('updated_at = NOW()');
-
-    values.push(id);
-
-    const result = await this.pool.query(
-      `
-          UPDATE bookings_manual
-          SET ${updates.join(', ')}
-          WHERE id = $${paramIndex}
-              RETURNING id, start_date, end_date, note
-      `,
-      values,
-    );
-
-    if (result.rows.length === 0) {
-      throw new Error('Booking not found');
-    }
-
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      startDate: this.formatDate(row.start_date),
-      endDate: this.formatDate(row.end_date),
-      source: 'manual',
-      note: row.note ?? null,
-    };
-  }
-
-  async deleteManualBooking(id: string): Promise<void> {
-    await this.pool.query('DELETE FROM bookings_manual WHERE id = $1', [id]);
-  }
-
-  async upsertExternalBookingNote(dto: UpsertExternalBookingNoteDto): Promise<void> {
-    await this.pool.query(
-      `
-          INSERT INTO external_booking_notes (apartment_id, external_id, note, created_by)
-          VALUES ($1, $2, $3, $4)
-              ON CONFLICT (apartment_id, external_id)
-      DO UPDATE SET
-              note = EXCLUDED.note,
-                           created_by = EXCLUDED.created_by,
-                           updated_at = NOW()
-      `,
-      [dto.apartmentId, dto.externalId, dto.note, dto.createdBy || 'admin'],
-    );
   }
 
   async deleteExternalBookingNote(dto: DeleteExternalBookingNoteDto): Promise<void> {
-    await this.pool.query(
-      `
-          DELETE FROM external_booking_notes
-          WHERE apartment_id = $1 AND external_id = $2
-      `,
-      [dto.apartmentId, dto.externalId],
-    );
+    await this.reservationsService.deleteNoteByExternalId(dto.apartmentId, dto.externalId);
   }
 
   private async getApartmentCalendar(apartment: any): Promise<ApartmentCalendarDto> {
@@ -169,132 +84,37 @@ export class CalendarsService {
       return { apartmentId: '', apartmentName: 'Nieznany', bookings: [] };
     }
 
-    const manualResult = await this.pool.query(
-      `
-          SELECT id, start_date, end_date, note
-          FROM bookings_manual
-          WHERE apartment_id = $1
-          ORDER BY start_date
-      `,
-      [apartment.id],
-    );
+    const reservations = await this.reservationsService.list({
+      apartmentId: apartment.id,
+      includeCancelled: false,
+    });
 
-    const externalResult = await this.pool.query(
-      `
-          SELECT id, external_id, start_date, end_date
-          FROM bookings_external
-          WHERE apartment_id = $1
-          ORDER BY start_date
-      `,
-      [apartment.id],
-    );
-
-    const manualBookings: BookingDto[] = manualResult.rows.map((row) => ({
-      id: row.id,
-      startDate: this.formatDate(row.start_date),
-      endDate: this.formatDate(row.end_date),
-      source: 'manual',
-      note: row.note ?? null,
-    }));
-
-    const externalIdList: string[] = externalResult.rows
-      .map((r) => r.external_id)
-      .filter((v) => typeof v === 'string' && v.length > 0);
-
-    const externalNotesMap = await this.getExternalNotesMap(apartment.id, externalIdList);
-
-    const externalBookings: BookingDto[] = externalResult.rows.map((row) => ({
-      id: row.id,
-      externalId: row.external_id || undefined,
-      startDate: this.formatDate(row.start_date),
-      endDate: this.formatDate(row.end_date),
-      source: 'external',
-      note: row.external_id ? externalNotesMap.get(row.external_id) ?? null : null,
-    }));
-
-    const allBookings = [...manualBookings, ...externalBookings].sort(
-      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
-    );
-
-    return { apartmentId: apartment.id, apartmentName: apartment.name, bookings: allBookings };
+    return {
+      apartmentId: apartment.id,
+      apartmentName: apartment.name,
+      bookings: reservations.map((reservation) => this.mapBooking(reservation, false)),
+    };
   }
 
-  private async getExternalNotesMap(
-    apartmentId: string,
-    externalIds: string[],
-  ): Promise<Map<string, string>> {
-    const map = new Map<string, string>();
-
-    if (externalIds.length === 0) return map;
-
-    const res = await this.pool.query(
-      `
-          SELECT external_id, note
-          FROM external_booking_notes
-          WHERE apartment_id = $1
-            AND external_id = ANY($2::text[])
-      `,
-      [apartmentId, externalIds],
-    );
-
-    for (const row of res.rows) {
-      map.set(row.external_id, row.note);
-    }
-
-    return map;
-  }
-
-  private async assertNoOverlaps(params: {
-    apartmentId: string;
-    startDate: string;
-    endDate: string;
-    excludeManualBookingId?: string;
-  }): Promise<void> {
-    const { apartmentId, startDate, endDate, excludeManualBookingId } = params;
-
-    const manualConflict = await this.pool.query(
-      `
-          SELECT 1
-          FROM bookings_manual
-          WHERE apartment_id = $1
-            AND start_date < $3
-            AND end_date > $2
-            AND ($4::uuid IS NULL OR id <> $4::uuid)
-              LIMIT 1
-      `,
-      [apartmentId, startDate, endDate, excludeManualBookingId ?? null],
-    );
-
-    if (manualConflict.rows.length > 0) {
-      throw new ConflictException('Termin nachodzi na istniejącą rezerwację manualną');
-    }
-
-    const externalConflict = await this.pool.query(
-      `
-          SELECT 1
-          FROM bookings_external
-          WHERE apartment_id = $1
-            AND start_date < $3
-            AND end_date > $2
-              LIMIT 1
-      `,
-      [apartmentId, startDate, endDate],
-    );
-
-    if (externalConflict.rows.length > 0) {
-      throw new ConflictException('Termin nachodzi na rezerwację z Booking.com');
-    }
-  }
-
-  private formatDate(date: Date | string): string {
-    if (typeof date === 'string') {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
-      return date.split('T')[0];
-    }
-
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  private mapBooking(reservation: ReservationDto, includePrivateDetails: boolean): BookingDto {
+    return {
+      id: reservation.id,
+      startDate: reservation.startDate,
+      endDate: reservation.endDate,
+      source: reservation.origin === 'manual' ? 'manual' : 'external',
+      origin: reservation.origin,
+      status: reservation.status,
+      externalId: reservation.externalId,
+      ...(includePrivateDetails
+        ? {
+            guestName: reservation.guestName,
+            guestCount: reservation.guestCount,
+            adults: reservation.adults,
+            children: reservation.children,
+          }
+        : {}),
+      note: reservation.note,
+      version: reservation.version,
+    };
   }
 }
