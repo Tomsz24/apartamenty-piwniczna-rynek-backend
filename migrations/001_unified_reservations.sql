@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS reservations (
     CONSTRAINT reservations_version_check CHECK (version > 0)
 );
 
+ALTER TABLE reservations ENABLE ROW LEVEL SECURITY;
+
 CREATE INDEX IF NOT EXISTS reservations_apartment_dates_idx
     ON reservations (apartment_id, start_date, end_date);
 
@@ -56,6 +58,8 @@ CREATE TABLE IF NOT EXISTS reservation_source_refs (
     CONSTRAINT reservation_source_refs_unique UNIQUE (apartment_id, source_system, external_id)
 );
 
+ALTER TABLE reservation_source_refs ENABLE ROW LEVEL SECURITY;
+
 CREATE INDEX IF NOT EXISTS reservation_source_refs_reservation_idx
     ON reservation_source_refs (reservation_id);
 
@@ -70,8 +74,12 @@ CREATE TABLE IF NOT EXISTS orphaned_reservation_notes (
     updated_at timestamptz NOT NULL DEFAULT NOW(),
     attached_to_reservation_id uuid REFERENCES reservations(id) ON DELETE SET NULL,
     attached_at timestamptz,
+    CONSTRAINT orphaned_reservation_notes_source_check
+        CHECK (source_system IN ('booking_email', 'booking_ical')),
     CONSTRAINT orphaned_reservation_notes_unique UNIQUE (apartment_id, source_system, external_id)
 );
+
+ALTER TABLE orphaned_reservation_notes ENABLE ROW LEVEL SECURITY;
 
 -- Zachowujemy identyfikatory starych rezerwacji, aby istniejący frontend nie stracił odwołań.
 INSERT INTO reservations (
@@ -95,7 +103,7 @@ SELECT
     end_date,
     note,
     COALESCE(created_by, 'legacy'),
-    NOW(),
+    COALESCE(created_at, NOW()),
     COALESCE(updated_at, NOW())
 FROM bookings_manual
 ON CONFLICT (id) DO NOTHING;
@@ -120,7 +128,7 @@ SELECT
     start_date,
     end_date,
     'ical-migration',
-    COALESCE(last_synced_at, NOW()),
+    COALESCE(created_at, last_synced_at, NOW()),
     COALESCE(last_synced_at, NOW()),
     COALESCE(last_synced_at, NOW())
 FROM bookings_external
@@ -180,7 +188,7 @@ SELECT
     notes.external_id,
     notes.note,
     COALESCE(notes.created_by, 'legacy'),
-    COALESCE(notes.updated_at, NOW()),
+    COALESCE(notes.created_at, notes.updated_at, NOW()),
     COALESCE(notes.updated_at, NOW())
 FROM external_booking_notes AS notes
 LEFT JOIN bookings_external AS booking
