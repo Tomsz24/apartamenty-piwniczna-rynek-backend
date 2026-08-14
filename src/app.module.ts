@@ -6,6 +6,8 @@ import { CalendarsModule } from './calendars/calendars.module';
 import { IcalSyncModule } from './ical-sync/ical-sync.module';
 import { AuthModule } from './auth/auth.module';
 import { ReservationsModule } from './reservations/reservations.module';
+import { TtlockModule } from './ttlock/ttlock.module';
+import { AccessCodesModule } from './access-codes/access-codes.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { ReservationsModule } from './reservations/reservations.module';
     ReservationsModule,
     CalendarsModule,
     IcalSyncModule,
+    TtlockModule,
+    AccessCodesModule,
     HealthModule,
   ],
 })

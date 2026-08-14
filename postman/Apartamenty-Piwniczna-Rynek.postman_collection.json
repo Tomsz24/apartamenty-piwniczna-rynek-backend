@@ -1,0 +1,726 @@
+{
+  "info": {
+    "_postman_id": "1c5a6951-cc71-4f7e-9538-6dca0f90d42c",
+    "name": "Apartamenty Piwniczna Rynek",
+    "description": "Kompletna kolekcja lokalnego API NestJS. Najpierw uruchom request Auth / Pobierz token Supabase. Requesty oznaczone WRITE zmieniają dane. Operacje WRITE TTLock pozostają blokowane, dopóki TTLOCK_WRITES_ENABLED=false.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "00 Auth — Supabase",
+      "description": "Logowanie użytkownika z emaila znajdującego się w ADMIN_EMAILS. Publishable key nie jest tokenem Bearer.",
+      "item": [
+        {
+          "name": "Pobierz token Supabase",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logowanie zakończone powodzeniem', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.access_token) pm.environment.set('accessToken', body.access_token);",
+                  "if (body.refresh_token) pm.environment.set('refreshToken', body.refresh_token);",
+                  "if (body.expires_in) pm.environment.set('tokenExpiresIn', String(body.expires_in));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabasePublishableKey}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
+            "description": "Wpisz adminEmail i adminPassword w środowisku. Po sukcesie skrypt zapisze accessToken i refreshToken."
+          },
+          "response": []
+        },
+        {
+          "name": "Odśwież token Supabase",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Token odświeżony', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.access_token) pm.environment.set('accessToken', body.access_token);",
+                  "if (body.refresh_token) pm.environment.set('refreshToken', body.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabasePublishableKey}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{supabaseUrl}}/auth/v1/token?grant_type=refresh_token"
+          },
+          "response": []
+        },
+        {
+          "name": "Sprawdź aktualnego użytkownika",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [
+              { "key": "apikey", "value": "{{supabasePublishableKey}}", "type": "text" }
+            ],
+            "url": "{{supabaseUrl}}/auth/v1/user"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "01 Health",
+      "item": [
+        {
+          "name": "Sprawdź połączenie z bazą",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health/db"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 Reservations",
+      "item": [
+        {
+          "name": "Lista rezerwacji",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const rows = pm.response.json();",
+              "if (Array.isArray(rows) && rows[0]) {",
+              "  pm.environment.set('reservationId', rows[0].id);",
+              "  pm.environment.set('reservationVersion', String(rows[0].version));",
+              "  if (rows[0].apartmentId) pm.environment.set('apartmentId', rows[0].apartmentId);",
+              "}"
+            ] }
+          }],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reservations",
+              "host": ["{{baseUrl}}"],
+              "path": ["reservations"],
+              "query": [
+                { "key": "apartmentId", "value": "{{apartmentId}}", "disabled": true },
+                { "key": "from", "value": "{{fromDate}}", "disabled": true },
+                { "key": "to", "value": "{{toDate}}", "disabled": true },
+                { "key": "status", "value": "{{reservationStatus}}", "disabled": true },
+                { "key": "includeCancelled", "value": "false", "disabled": true }
+              ]
+            },
+            "description": "Włącz wybrane query params w zakładce Params. Pierwszy wynik zapisuje reservationId, reservationVersion i apartmentId."
+          },
+          "response": []
+        },
+        {
+          "name": "Szczegóły rezerwacji",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('reservationId', body.id);",
+              "if (body.version) pm.environment.set('reservationVersion', String(body.version));",
+              "if (body.apartmentId) pm.environment.set('apartmentId', body.apartmentId);"
+            ] }
+          }],
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/reservations/{{reservationId}}" },
+          "response": []
+        },
+        {
+          "name": "WRITE — Utwórz ręczną rezerwację",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('reservationId', body.id);",
+              "if (body.version) pm.environment.set('reservationVersion', String(body.version));"
+            ] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apartmentId\": \"{{apartmentId}}\",\n  \"startDate\": \"{{startDate}}\",\n  \"endDate\": \"{{endDate}}\",\n  \"status\": \"confirmed\",\n  \"guestName\": \"Jan Kowalski — test Postman\",\n  \"guestCount\": 3,\n  \"adults\": 2,\n  \"children\": 1,\n  \"note\": \"Rezerwacja testowa z Postmana\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/reservations"
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Edytuj rezerwację",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.version) pm.environment.set('reservationVersion', String(body.version));"
+            ] }
+          }],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestName\": \"Jan Kowalski — edycja Postman\",\n  \"guestCount\": 4,\n  \"adults\": 2,\n  \"children\": 2,\n  \"note\": \"Zmieniona notatka testowa\",\n  \"expectedVersion\": {{reservationVersion}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/reservations/{{reservationId}}"
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Anuluj ręczną rezerwację",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/reservations/{{reservationId}}",
+            "description": "Logiczne anulowanie. Oczekiwany status HTTP 204."
+          },
+          "response": []
+        },
+        {
+          "name": "Lista osieroconych notatek",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const rows = pm.response.json();",
+              "if (Array.isArray(rows) && rows[0]) pm.environment.set('orphanedNoteId', rows[0].id);"
+            ] }
+          }],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reservations/orphaned-notes",
+              "host": ["{{baseUrl}}"],
+              "path": ["reservations", "orphaned-notes"],
+              "query": [{ "key": "apartmentId", "value": "{{apartmentId}}", "disabled": true }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Przypnij osieroconą notatkę",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/reservations/{{reservationId}}/orphaned-notes/{{orphanedNoteId}}/attach"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 Calendars — kompatybilność",
+      "item": [
+        {
+          "name": "Publiczna lista kalendarzy",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/calendars"
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Utwórz booking ręczny",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('manualBookingId', body.id);",
+              "if (body.version) pm.environment.set('manualBookingVersion', String(body.version));"
+            ] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apartmentId\": \"{{apartmentId}}\",\n  \"startDate\": \"{{startDate}}\",\n  \"endDate\": \"{{endDate}}\",\n  \"status\": \"confirmed\",\n  \"guestName\": \"Booking testowy Postman\",\n  \"guestCount\": 2,\n  \"adults\": 2,\n  \"children\": 0,\n  \"note\": \"Test starego endpointu\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/calendars/bookings"
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Edytuj booking ręczny",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.version) pm.environment.set('manualBookingVersion', String(body.version));"
+            ] }
+          }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Zmieniona notatka starego endpointu\",\n  \"expectedVersion\": {{manualBookingVersion}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/calendars/bookings/{{manualBookingId}}"
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Anuluj booking ręczny",
+          "request": { "method": "DELETE", "header": [], "url": "{{baseUrl}}/calendars/bookings/{{manualBookingId}}" },
+          "response": []
+        },
+        {
+          "name": "WRITE — Wymuś synchronizację iCal",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/calendars/sync",
+            "description": "Obecnie ICAL_SYNC_ENABLED=false powinno blokować synchronizację."
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Dodaj lub zmień notatkę zewnętrzną",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apartmentId\": \"{{apartmentId}}\",\n  \"externalId\": \"{{externalId}}\",\n  \"note\": \"Notatka testowa dla zewnętrznej rezerwacji\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/calendars/external-notes"
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE — Usuń notatkę zewnętrzną",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apartmentId\": \"{{apartmentId}}\",\n  \"externalId\": \"{{externalId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/calendars/external-notes"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 TTLock — diagnostyka",
+      "description": "Endpointy WRITE TTLOCK TEST zapisują bezpośrednio w TTLock, ale nie dotykają naszej bazy i nie wymagają rezerwacji. Używaj wyłącznie do kontrolowanego testu i zawsze usuń kod na końcu.",
+      "item": [
+        {
+          "name": "Status TTLock",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/ttlock/status" },
+          "response": []
+        },
+        {
+          "name": "Lista zamków",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const rows = pm.response.json();",
+              "if (Array.isArray(rows) && rows[0] && !pm.environment.get('lockId')) pm.environment.set('lockId', String(rows[0].lockId));"
+            ] }
+          }],
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/ttlock/locks", "description": "Skrypt ustawia pierwszy lockId tylko wtedy, gdy zmienna jest pusta. Przed testami zapisu wybierz właściwy zamek ręcznie." },
+          "response": []
+        },
+        {
+          "name": "Lista bramek",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/ttlock/gateways" },
+          "response": []
+        },
+        {
+          "name": "Możliwości kodów zamków",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/ttlock/passcode-capabilities" },
+          "response": []
+        },
+        {
+          "name": "Metadane kodów wybranego zamka",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/ttlock/locks/{{lockId}}/passcodes" },
+          "response": []
+        },
+        {
+          "name": "Bezpieczny podgląd kodu — bez zapisu",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lockId\": {{lockId}},\n  \"passcode\": \"{{testPasscode}}\",\n  \"name\": \"Test Postman bez zapisu\",\n  \"startAt\": \"{{validFrom}}\",\n  \"endAt\": \"{{validUntil}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/ttlock/passcodes/preview",
+            "description": "Waliduje dokładnie 4 cyfry i możliwości zamka, ale zawsze writeExecuted=false."
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE TTLOCK TEST — Utwórz kod bez rezerwacji",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.keyboardPwdId) pm.environment.set('testKeyboardPwdId', String(body.keyboardPwdId));"
+            ] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passcode\": \"{{testPasscode}}\",\n  \"name\": \"TEST API — USUNAC\",\n  \"startAt\": \"{{validFrom}}\",\n  \"endAt\": \"{{validUntil}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/ttlock/diagnostic/locks/{{lockId}}/passcodes",
+            "description": "Rzeczywiście dodaje kod do wybranego zamka przez bramkę, bez rezerwacji i bez zapisu w naszej bazie. Wymaga TTLOCK_WRITES_ENABLED=true."
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE TTLOCK TEST — Zmień daty kodu bez rezerwacji",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"startAt\": \"{{modifiedValidFrom}}\",\n  \"endAt\": \"{{modifiedValidUntil}}\",\n  \"name\": \"TEST API — ZMIENIONY\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/ttlock/diagnostic/locks/{{lockId}}/passcodes/{{testKeyboardPwdId}}",
+            "description": "Zmienia okres ważności kodu bez zapisu w naszej bazie. Obie daty muszą być podane razem."
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE TTLOCK TEST — Usuń kod bez rezerwacji",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/ttlock/diagnostic/locks/{{lockId}}/passcodes/{{testKeyboardPwdId}}",
+            "description": "Usuwa testowy kod bezpośrednio z TTLock. Nie pozostawia rekordu w naszej bazie."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 Access Codes",
+      "description": "Endpointy wymagają migracji 005 i przypisania zamków. PUT by-reservation jest główną idempotentną ścieżką automatyczną. PUT/PATCH/Apply/DELETE kontaktują się z TTLock i są blokowane przy TTLOCK_WRITES_ENABLED=false.",
+      "item": [
+        {
+          "name": "Status modułu kodów",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/access-codes/status" },
+          "response": []
+        },
+        {
+          "name": "Overview — bateria, bramki i przypisania",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/access-codes/overview" },
+          "response": []
+        },
+        {
+          "name": "Overview ze statystykami",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/access-codes/overview?includeStatistics=true&statisticsDays={{statisticsDays}}",
+            "description": "Statystyki pobierane na żądanie. statisticsDays: 1–180."
+          },
+          "response": []
+        },
+        {
+          "name": "Lista kodów",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.items && body.items[0]) {",
+              "  pm.environment.set('accessCodeId', body.items[0].id);",
+              "  pm.environment.set('accessCodeVersion', String(body.items[0].version));",
+              "  pm.environment.set('reservationId', body.items[0].reservationId);",
+              "} ",
+              "if (body.nextCursor) pm.environment.set('accessCodeCursor', body.nextCursor);"
+            ] }
+          }],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/access-codes",
+              "host": ["{{baseUrl}}"],
+              "path": ["access-codes"],
+              "query": [
+                { "key": "apartmentId", "value": "{{apartmentId}}", "disabled": true },
+                { "key": "reservationId", "value": "{{reservationId}}", "disabled": true },
+                { "key": "status", "value": "{{accessCodeStatus}}", "disabled": true },
+                { "key": "from", "value": "{{validFrom}}", "disabled": true },
+                { "key": "to", "value": "{{validUntil}}", "disabled": true },
+                { "key": "cursor", "value": "{{accessCodeCursor}}", "disabled": true },
+                { "key": "limit", "value": "50", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Historia kodów",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/access-codes/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["access-codes", "history"],
+              "query": [
+                { "key": "apartmentId", "value": "{{apartmentId}}", "disabled": true },
+                { "key": "reservationId", "value": "{{reservationId}}", "disabled": true },
+                { "key": "status", "value": "{{accessCodeStatus}}", "disabled": true },
+                { "key": "from", "value": "{{validFrom}}", "disabled": true },
+                { "key": "to", "value": "{{validUntil}}", "disabled": true },
+                { "key": "cursor", "value": "{{accessCodeCursor}}", "disabled": true },
+                { "key": "limit", "value": "50", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Szczegóły kodu",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('accessCodeId', body.id);",
+              "if (body.version) pm.environment.set('accessCodeVersion', String(body.version));"
+            ] }
+          }],
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/access-codes/{{accessCodeId}}" },
+          "response": []
+        },
+        {
+          "name": "Użycia konkretnego kodu — bez zapisu lokalnego",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/access-codes/{{accessCodeId}}/usage" },
+          "response": []
+        },
+        {
+          "name": "WRITE DB — Odśwież i zapisz użycia kodu",
+          "request": { "method": "POST", "header": [], "url": "{{baseUrl}}/access-codes/{{accessCodeId}}/usage/refresh" },
+          "response": []
+        },
+        {
+          "name": "WRITE TTLOCK — Utwórz lub pobierz kod rezerwacji (automat)",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('accessCodeId', body.id);",
+              "if (body.version) pm.environment.set('accessCodeVersion', String(body.version));",
+              "if (body.reservationId) pm.environment.set('reservationId', body.reservationId);",
+              "if (body.validFrom) pm.environment.set('validFrom', body.validFrom);",
+              "if (body.validUntil) pm.environment.set('validUntil', body.validUntil);"
+            ] }
+          }],
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": "{{baseUrl}}/access-codes/by-reservation/{{reservationId}}",
+            "description": "Główna ścieżka automatyczna. Wylicza godziny z polityki apartamentu, tworzy kod w TTLock i potwierdza go przez odczyt. Ponowienie zwraca ten sam aktywny kod. UWAGA: wymaga TTLOCK_WRITES_ENABLED=true, jeśli kod jeszcze nie istnieje."
+          },
+          "response": []
+        },
+        {
+          "name": "AWARYJNE / TECHNICZNE — szkice i wymiana cyfr",
+          "description": "Nie jest to standardowy flow rezerwacji. Używaj wyłącznie do świadomej, awaryjnej wymiany cyfr kodu albo diagnostyki starszej ścieżki dwuetapowej.",
+          "item": [
+        {
+          "name": "TECHNICZNE — Wygeneruj początkowy szkic (bez zapisu TTLock)",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('draftId', body.id);",
+              "if (body.version) pm.environment.set('draftVersion', String(body.version));",
+              "if (body.accessCodeId) pm.environment.set('accessCodeId', body.accessCodeId);"
+            ] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"{{reservationId}}\",\n  \"validFrom\": \"{{validFrom}}\",\n  \"validUntil\": \"{{validUntil}}\",\n  \"name\": \"Kod testowy Postman\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/access-codes/drafts",
+            "description": "Starsza ścieżka techniczna. Standardowo użyj PUT /access-codes/by-reservation/:reservationId. Ten request nie ustawia jeszcze kodu w zamku."
+          },
+          "response": []
+        },
+        {
+          "name": "Pobierz szkic po ID",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.version) pm.environment.set('draftVersion', String(body.version));",
+              "if (body.appliedAccessCodeId) pm.environment.set('accessCodeId', body.appliedAccessCodeId);"
+            ] }
+          }],
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/access-codes/drafts/{{draftId}}" },
+          "response": []
+        },
+        {
+          "name": "Pobierz szkic po rezerwacji",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('draftId', body.id);",
+              "if (body.version) pm.environment.set('draftVersion', String(body.version));"
+            ] }
+          }],
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/access-codes/drafts/by-reservation/{{reservationId}}" },
+          "response": []
+        },
+        {
+          "name": "WRITE TTLOCK — Zatwierdź szkic i ustaw kod",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.draft && body.draft.version) pm.environment.set('draftVersion', String(body.draft.version));",
+              "if (body.accessCode && body.accessCode.id) pm.environment.set('accessCodeId', body.accessCode.id);",
+              "if (body.accessCode && body.accessCode.version) pm.environment.set('accessCodeVersion', String(body.accessCode.version));"
+            ] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedDraftVersion\": {{draftVersion}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/access-codes/drafts/{{draftId}}/apply",
+            "description": "UWAGA: rzeczywisty zapis do zamka, gdy TTLOCK_WRITES_ENABLED=true."
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE DB — Anuluj niezatwierdzony szkic",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/access-codes/drafts/{{draftId}}?expectedDraftVersion={{draftVersion}}"
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE DB — Wygeneruj szkic wymiany kodu",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.id) pm.environment.set('draftId', body.id);",
+              "if (body.version) pm.environment.set('draftVersion', String(body.version));"
+            ] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"validFrom\": \"{{validFrom}}\",\n  \"validUntil\": \"{{validUntil}}\",\n  \"name\": \"Nowy kod testowy Postman\",\n  \"expectedVersion\": {{accessCodeVersion}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/access-codes/{{accessCodeId}}/replacement-draft",
+            "description": "Tworzy szkic nowego kodu. Samo wywołanie nie zmienia jeszcze kodu TTLock."
+          },
+          "response": []
+        }
+          ]
+        },
+        {
+          "name": "WRITE TTLOCK — Ręcznie zmień godziny aktywnego kodu",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "const body = pm.response.json();",
+              "if (body.version) pm.environment.set('accessCodeVersion', String(body.version));"
+            ] }
+          }],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"validFrom\": \"{{validFrom}}\",\n  \"validUntil\": \"{{validUntil}}\",\n  \"expectedVersion\": {{accessCodeVersion}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/access-codes/{{accessCodeId}}",
+            "description": "UWAGA: zmienia wyłącznie godziny w dniu przyjazdu i wyjazdu rezerwacji, zachowuje cyfry kodu i potwierdza wynik w TTLock."
+          },
+          "response": []
+        },
+        {
+          "name": "WRITE TTLOCK — Usuń kod z zamka",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/access-codes/{{accessCodeId}}?expectedVersion={{accessCodeVersion}}",
+            "description": "UWAGA: usuwa kod z TTLock i logicznie oznacza lokalny rekord jako revoked."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

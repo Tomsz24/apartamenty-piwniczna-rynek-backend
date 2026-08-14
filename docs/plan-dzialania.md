@@ -1,6 +1,6 @@
 # Plan działania: rezerwacje, Hostex i TTLock
 
-Stan na: **2026-08-12**
+Stan na: **2026-08-14**
 
 Projekt: backend NestJS dla Apartamentów Piwniczna-Zdrój Rynek
 
@@ -227,6 +227,11 @@ zachowane, RLS i uprawnienia zostały sprawdzone, a kopia może zostać odtworzo
 - [ ] Dodać ręczny endpoint administracyjny „synchronizuj teraz”.
 - [ ] Dodać alert po trwałym błędzie, rosnącej kolejce lub zbyt dawnej udanej
   synchronizacji.
+- [ ] W pierwszym etapie komunikacji udostępnić najwyżej podgląd ostatnich
+  wiadomości z rozmowy Hostex powiązanej z rezerwacją. Nie budować jeszcze
+  pełnego czatu ani wysyłania odpowiedzi z naszej aplikacji.
+- [ ] Wysyłkę SMS pozostawić na sam koniec projektu i uruchomić dopiero po
+  osobnej decyzji właścicieli o dodatkowym płatnym dostawcy.
 
 ### 2.5. Ceny, dostępność i ograniczenia
 
@@ -277,74 +282,110 @@ opublikowane z niebezpieczną wartością.
 ### 3.1. Konto i aplikacja deweloperska
 
 - [x] Założyć darmowe konto TTLock Open Platform EU.
-- [x] Potwierdzić limit 30 000 zapytań miesięcznie jako wystarczający dla dwóch
-  zamków bez częstego odpytywania historii.
+- [x] Potwierdzić limit 30 000 zapytań miesięcznie jako wystarczający dla trzech
+  zamków i dwóch bramek bez częstego odpytywania historii.
 - [x] Utworzyć aplikację deweloperską i wysłać ją do review.
-- [ ] Otrzymać akceptację aplikacji. **Aktualny status: `In review`.**
-- [ ] Po akceptacji odebrać `clientId` i `clientSecret` oraz umieścić je wyłącznie
+- [x] Otrzymać akceptację aplikacji.
+- [x] Po akceptacji odebrać `clientId` i `clientSecret` oraz umieścić je wyłącznie
   w sekretach środowiska.
 
 ### 3.2. Połączenie istniejących zamków
 
-- [ ] Potwierdzić aktualny oficjalny sposób autoryzacji istniejącego konta
-  właściciela TTLock i bezpiecznie uzyskać access/refresh token.
-- [ ] Zaimplementować automatyczne odświeżanie tokenu przed wygaśnięciem oraz
-  alarm po utracie autoryzacji.
-- [ ] Wywołać wyłącznie `lock/list` dla istniejącego konta; nie inicjalizować,
+- [x] Potwierdzić aktualny oficjalny sposób autoryzacji istniejącego konta
+  właściciela TTLock.
+- [x] Uzyskać pierwszy access/refresh token dla konta właściciela i wykonać
+  rzeczywisty test tylko do odczytu.
+- [x] Zaimplementować automatyczne odświeżanie tokenu przed wygaśnięciem.
+- [ ] Dodać alarm po trwałej utracie autoryzacji TTLock.
+- [x] Wywołać wyłącznie `lock/list` dla istniejącego konta; nie inicjalizować,
   nie resetować i nie usuwać zamków.
-- [ ] Dla obu zamków odczytać i przypisać do apartamentów: `lockId`, nazwę,
-  `keyboardPwdVersion`, poziom baterii, `specialValue` i `hasGateway`.
-- [ ] Pobrać listę bramek i potwierdzić powiązanie każdego zamka z właściwą
-  bramką oraz jakość sygnału RSSI.
+- [x] Dla trzech zamków odczytać `lockId`, nazwę, `keyboardPwdVersion`, poziom
+  baterii, `specialValue` i `hasGateway`.
+- [ ] Zapisać mapowanie: wspólne drzwi wejściowe oraz zamek właściwy dla każdego
+  z dwóch apartamentów.
+- [x] Pobrać listę dwóch bramek i potwierdzić, że obie są online.
+- [ ] Potwierdzić powiązanie każdego zamka z właściwą bramką oraz jakość sygnału
+  RSSI.
 - [ ] Potwierdzić strefę czasową, model, firmware i możliwości zamka.
 - [ ] Nigdy nie logować odpowiedzi zawierających `lockData`, klucze AES,
   `adminPwd`, superkod lub inne dane administracyjne zamka.
-- [ ] Potwierdzić `keyboardPwdVersion = 4` i obsługę zdalnego dodawania własnych
-  kodów przez bramkę. Obecne zdalne tworzenie kodów w aplikacji TTLock jest
-  dobrym sygnałem, ale test API jest wymagany.
+- [x] Potwierdzić `keyboardPwdVersion = 4` dla wszystkich trzech zamków.
+- [x] Ustalić wymaganie biznesowe: kod gościa do apartamentu ma dokładnie
+      4 cyfry; nasze zamki obsługują takie kody w aplikacji TTLock.
+- [x] Rozdzielić ograniczenie mobilnego SDK Bluetooth (6–9 cyfr) od Cloud API
+      V3 używanego przez backend, które nie dokumentuje minimalnej długości.
+- [ ] Po osobnej zgodzie wykonać kontrolowany test czterocyfrowego kodu przez
+      bramkę na jednym zamku apartamentu i natychmiast potwierdzić rezultat.
+- [x] Przygotować bezpieczny odczyt metadanych kodów bez ujawniania ich wartości.
+- [x] Przygotować walidację i podgląd czasowego kodu bez wykonywania zapisu.
+- [ ] Potwierdzić przez API obsługę zdalnego dodawania własnych kodów przez
+  bramkę. Obecne zdalne tworzenie kodów w aplikacji TTLock jest dobrym sygnałem,
+  ale test API jest wymagany.
 
 ### 3.3. Klient TTLock w NestJS
 
-- [ ] Utworzyć osobny `TtlockModule` i klienta Cloud API V3.
-- [ ] Obsłużyć format `application/x-www-form-urlencoded`, wymagane znaczniki
+- [x] Utworzyć osobny `TtlockModule` i klienta Cloud API V3.
+- [x] Obsłużyć format `application/x-www-form-urlencoded`, wymagane znaczniki
   czasu w milisekundach oraz błąd rozbieżności zegara serwera.
-- [ ] Dodać timeouty, kontrolowane retry, limit zapytań i mapowanie kodów błędów.
-- [ ] Redagować tokeny, hasła i kody dostępu ze wszystkich logów i raportów.
-- [ ] Dodać endpoint administracyjny statusu integracji bez ujawniania sekretów.
-- [ ] Dodać bezpieczny ręczny test połączenia oraz odczyt baterii/bramki na
+- [x] Dodać timeouty, pojedyncze kontrolowane ponowienie autoryzacji i mapowanie
+  kodów błędów.
+- [ ] Dodać lokalny limit zapytań przed udostępnieniem kolejnych operacji TTLock.
+- [x] Redagować tokeny, hasła i kody dostępu ze wszystkich logów i raportów.
+- [x] Dodać endpoint administracyjny statusu integracji bez ujawniania sekretów.
+- [x] Dodać bezpieczny ręczny test połączenia oraz odczyt baterii/bramki na
   żądanie.
 
 ### 3.4. Automatyczne kody do rezerwacji
 
-- [ ] Ustalić konfigurowalny moment utworzenia kodu i jego wysłania do gościa,
-  np. utworzenie kilka dni przed pobytem i wysłanie dzień przed przyjazdem.
-- [ ] Ustalić godziny ważności kodu względem check-in/check-out oraz strefy
-  `Europe/Warsaw`, uwzględniając zmianę czasu letni/zimowy.
-- [ ] Zaimplementować utworzenie własnego czasowego kodu przez bramkę.
-- [ ] Generować nieprzewidywalne kody zgodne z ograniczeniami zamka i nie używać
+- [x] Przygotować migrację `005_ttlock_access_codes.sql` z mapowaniem zamków,
+  konfigurowalnymi godzinami apartamentów, szyfrowaną historią i szkicami
+  awaryjnymi, stanem synchronizacji, statystykami oraz audytem.
+- [ ] Wykonać kopię bazy i dopiero potem uruchomić migrację 005.
+- [ ] Ustawić w sekretach `ACCESS_CODE_ENCRYPTION_KEY` i zachować jego kopię
+  poza repozytorium; utrata klucza uniemożliwi odczyt zapisanych kodów.
+- [ ] Przypisać dwa zamki apartamentów do rekordów `apartments`; wspólne drzwi
+  wejściowe zachować jako urządzenie `shared_entrance` ze stałym kodem.
+- [x] Ustalić moment utworzenia kodu: bezpośrednio po zapisaniu potwierdzonej
+  rezerwacji z Hostex. Wysłanie instrukcji gościowi pozostaje osobnym zadaniem
+  uruchamianym w dniu przyjazdu.
+- [x] Ustalić godziny ważności kodu: domyślnie `15:00` w dniu przyjazdu do
+  `11:00` w dniu wyjazdu, konfigurowalne per apartament i przeliczane w strefie
+  `Europe/Warsaw` z uwzględnieniem czasu letniego/zimowego.
+- [x] Przygotować utworzenie własnego czasowego kodu przez bramkę, domyślnie
+  zablokowane przez `TTLOCK_WRITES_ENABLED=false` do czasu testu fizycznego.
+- [x] Dodać główną, jednoetapową i idempotentną operację automatyczną po
+  `reservationId`; backend sam wybiera zamek i godziny. Szkice pozostawić jako
+  awaryjny mechanizm świadomej wymiany cyfr kodu, a nie standardowy flow.
+- [x] Zapewnić, że ponowienie automatycznej operacji zwraca ten sam aktywny kod,
+  a nie tworzy kolejnego.
+- [x] Generować nieprzewidywalne kody zgodne z ograniczeniami zamka i nie używać
   łatwych schematów opartych na numerze rezerwacji lub dacie.
-- [ ] Zapisać zewnętrzny identyfikator kodu, okres ważności i stan operacji przy
+- [x] Zapisać zewnętrzny identyfikator kodu, okres ważności i stan operacji przy
   rezerwacji.
-- [ ] Po utworzeniu potwierdzić kod przez listę kodów zamka, zamiast polegać
+- [x] Po utworzeniu potwierdzić kod przez listę kodów zamka, zamiast polegać
   wyłącznie na odpowiedzi pierwszego żądania.
-- [ ] Zapewnić idempotencję: ponowienie zadania nie może tworzyć kolejnych kodów
+- [x] Zapewnić idempotencję: ponowienie zadania nie może tworzyć kolejnych kodów
   dla tej samej rezerwacji.
-- [ ] Po zmianie terminu rezerwacji zmienić okres ważności kodu lub bezpiecznie
-  zastąpić go nowym.
-- [ ] Po anulowaniu rezerwacji usunąć/unieważnić kod i potwierdzić rezultat.
+- [x] Przygotować ręczną zmianę wyłącznie godzin ważności kodu w dniu przyjazdu
+  i wyjazdu; zachować te same cyfry, ponownie potwierdzić stan w TTLock i
+  oznaczyć zmianę jako `manual_override`.
+- [x] Przygotować ręczne usunięcie/unieważnienie kodu z zachowaniem lokalnej
+  historii; automatyczne powiązanie z anulowaniem rezerwacji pozostaje osobnym
+  krokiem.
 - [ ] Obsłużyć wyścig: modyfikacja lub anulowanie podczas tworzenia/wysyłania
   kodu.
 - [ ] Dodać ponowienia i alert, jeśli bramka jest offline albo operacja kończy
   się błędem.
-- [ ] Dodać możliwość ręcznego ponowienia, zastąpienia i unieważnienia kodu przez
+- [x] Dodać możliwość ręcznego zastąpienia i unieważnienia kodu przez
   administratora.
 - [ ] Przygotować dalszy punkt integracji z wysyłką wiadomości do gościa oraz
   zapisem, kiedy i komu kod został wysłany.
 
 ### 3.5. Historia i funkcje opcjonalne
 
-- [ ] Dodać pobieranie historii otwarć wyłącznie na żądanie administratora.
-- [ ] Nie odpytywać TTLock co kilka minut i nie dublować standardowych
+- [x] Dodać pobieranie historii otwarć wyłącznie na żądanie administratora oraz
+  opcjonalne zapisanie licznika użyć w lokalnej historii.
+- [x] Nie odpytywać TTLock co kilka minut i nie dublować standardowych
   powiadomień aplikacji TTLock.
 - [ ] Opcjonalnie dodać rzadki odczyt baterii i stanu bramki, np. raz dziennie,
   tylko jeśli okaże się użyteczny.
@@ -366,7 +407,8 @@ opublikowane z niebezpieczną wartością.
 - [ ] Sprawdzić historię otwarć na żądanie bez stałego pollingu.
 - [ ] Przygotować awaryjny kod administracyjny/klucz mechaniczny i instrukcję dla
   właścicieli na wypadek awarii automatyzacji.
-- [ ] Dopiero po pełnym teście pierwszego zamka skonfigurować drugi.
+- [ ] Dopiero po pełnym teście jednego zamka skonfigurować dwa pozostałe, w tym
+  wspólne drzwi wejściowe.
 
 Warunek zakończenia etapu: dla prawdziwej rezerwacji można niezawodnie utworzyć,
 potwierdzić, zmienić i usunąć kod, a awaria bramki lub API prowadzi do alarmu i
@@ -402,8 +444,8 @@ jasnej procedury ręcznej.
 4. [ ] Uruchomić dostęp do Hostex API bez łączenia aktywnych ofert Booking i
    zebrać prawdziwe zanonimizowane odpowiedzi/payloady.
 5. [ ] Zaimplementować klienta Hostex, import, webhooki i uzgadnianie danych.
-6. [ ] Po akceptacji aplikacji TTLock odczytać listę istniejących zamków i ich
-   możliwości bez resetowania urządzeń.
+6. [x] Uzupełnić autoryzację konta właściciela TTLock i odczytać listę
+   istniejących zamków oraz ich możliwości bez resetowania urządzeń.
 7. [ ] Zaimplementować i fizycznie przetestować kody TTLock na jednym zamku.
 8. [ ] Wykonać kopię, migrację i wdrożenie backendu.
 9. [ ] Podłączyć Hostex do jednego apartamentu według checklisty kontrolnej.

@@ -1,4 +1,10 @@
-import { Injectable, Inject, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  OnModuleInit,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Pool, PoolClient } from 'pg';
 import { ConfigService } from '@nestjs/config';
@@ -21,17 +27,28 @@ interface ApartmentConfig {
 @Injectable()
 export class IcalSyncService implements OnModuleInit {
   private readonly logger = new Logger(IcalSyncService.name);
+  private readonly enabled: boolean;
   private apartments: ApartmentConfig[] = [];
 
   constructor(
     @Inject('PG_POOL') private readonly pool: Pool,
     private readonly configService: ConfigService,
-  ) {}
+  ) {
+    this.enabled = this.readBoolean(
+      this.configService.get<string>('ICAL_SYNC_ENABLED'),
+      true,
+    );
+  }
 
   /**
    * Przy starcie aplikacji - załaduj konfigurację i wykonaj pierwszą synchronizację
    */
   async onModuleInit() {
+    if (!this.enabled) {
+      this.logger.warn('Synchronizacja iCal jest wyłączona przez ICAL_SYNC_ENABLED=false');
+      return;
+    }
+
     await this.loadApartmentsConfig();
     await this.syncAllCalendars();
   }
@@ -39,6 +56,8 @@ export class IcalSyncService implements OnModuleInit {
   /** Automatyczna synchronizacja co 30 minut. */
   @Cron(CronExpression.EVERY_30_MINUTES)
   async handleCron() {
+    if (!this.enabled) return;
+
     this.logger.log('⏰ Starting scheduled iCal sync...');
     await this.syncAllCalendars();
   }
@@ -478,6 +497,12 @@ export class IcalSyncService implements OnModuleInit {
    * Ręczna synchronizacja (może być wywołana z endpointu admina)
    */
   async forceSync(): Promise<{ synced: number; errors: string[] }> {
+    if (!this.enabled) {
+      throw new ServiceUnavailableException(
+        'Synchronizacja iCal jest wyłączona przez konfigurację',
+      );
+    }
+
     const errors: string[] = [];
     let synced = 0;
 
@@ -491,5 +516,10 @@ export class IcalSyncService implements OnModuleInit {
     }
 
     return { synced, errors };
+  }
+
+  private readBoolean(value: string | undefined, fallback: boolean): boolean {
+    if (value === undefined || value.trim() === '') return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
   }
 }

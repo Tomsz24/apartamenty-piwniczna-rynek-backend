@@ -21,6 +21,17 @@ Czwarta migracja dodaje fundament pod powiadomienia push i inne alerty:
 - zdarzenia powiadomień,
 - próby dostarczenia na konkretne urządzenia.
 
+Piąta migracja przygotowuje integrację kodów dostępu TTLock:
+
+- domyślne godziny `15:00`–`11:00` i strefę `Europe/Warsaw`, konfigurowalne
+  osobno dla każdego apartamentu,
+- mapowanie zamków na apartamenty i wspólne wejście,
+- zaszyfrowaną historię kodów powiązaną z rezerwacjami,
+- zaszyfrowane, wygasające szkice używane wyłącznie przy awaryjnej wymianie
+  cyfr kodu przed zapisem do TTLock,
+- stan synchronizacji, statystyki użycia i dziennik operacji,
+- RLS oraz odebranie bezpośredniego dostępu rolom `anon` i `authenticated`.
+
 Przed uruchomieniem na produkcji:
 
 1. wykonaj kopię bazy,
