@@ -175,9 +175,9 @@ zachowane, RLS i uprawnienia zostały sprawdzone, a kopia może zostać odtworzo
 
 ### 2.2. Klient Hostex i mapowanie danych
 
-- [ ] Utworzyć osobny `HostexModule` i klienta API ukrytego za interfejsem
+- [x] Utworzyć osobny `HostexModule` i klienta API ukrytego za interfejsem
   dostawcy, aby domena rezerwacji nie zależała bezpośrednio od Hostex.
-- [ ] Dodać timeouty, ograniczone retry z backoffem, obsługę `429`, błędów 5xx i
+- [x] Dodać timeouty, ograniczone retry z backoffem, obsługę `429`, błędów 5xx i
   bezpieczne logowanie bez tokenów i danych osobowych.
 - [ ] Pobrać listę properties/listings i przypisać każdy identyfikator do
   właściwego `apartment_id`.
@@ -314,11 +314,11 @@ opublikowane z niebezpieczną wartością.
       4 cyfry; nasze zamki obsługują takie kody w aplikacji TTLock.
 - [x] Rozdzielić ograniczenie mobilnego SDK Bluetooth (6–9 cyfr) od Cloud API
       V3 używanego przez backend, które nie dokumentuje minimalnej długości.
-- [ ] Po osobnej zgodzie wykonać kontrolowany test czterocyfrowego kodu przez
-      bramkę na jednym zamku apartamentu i natychmiast potwierdzić rezultat.
+- [x] Po osobnej zgodzie wykonać kontrolowany test czterocyfrowego kodu przez
+  bramkę na jednym zamku apartamentu i natychmiast potwierdzić rezultat.
 - [x] Przygotować bezpieczny odczyt metadanych kodów bez ujawniania ich wartości.
 - [x] Przygotować walidację i podgląd czasowego kodu bez wykonywania zapisu.
-- [ ] Potwierdzić przez API obsługę zdalnego dodawania własnych kodów przez
+- [x] Potwierdzić przez API obsługę zdalnego dodawania własnych kodów przez
   bramkę. Obecne zdalne tworzenie kodów w aplikacji TTLock jest dobrym sygnałem,
   ale test API jest wymagany.
 
@@ -443,7 +443,7 @@ jasnej procedury ręcznej.
    produkcyjnego Supabase.
 4. [ ] Uruchomić dostęp do Hostex API bez łączenia aktywnych ofert Booking i
    zebrać prawdziwe zanonimizowane odpowiedzi/payloady.
-5. [ ] Zaimplementować klienta Hostex, import, webhooki i uzgadnianie danych.
+5. [ ] Rozszerzyć gotowego klienta Hostex o import, webhooki i uzgadnianie danych.
 6. [x] Uzupełnić autoryzację konta właściciela TTLock i odczytać listę
    istniejących zamków oraz ich możliwości bez resetowania urządzeń.
 7. [ ] Zaimplementować i fizycznie przetestować kody TTLock na jednym zamku.

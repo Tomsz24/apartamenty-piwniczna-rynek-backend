@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { TtlockModule } from './ttlock/ttlock.module';
 import { AccessCodesModule } from './access-codes/access-codes.module';
+import { HostexModule } from './hostex/hostex.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { AccessCodesModule } from './access-codes/access-codes.module';
     IcalSyncModule,
     TtlockModule,
     AccessCodesModule,
+    HostexModule,
     HealthModule,
   ],
 })

@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "1c5a6951-cc71-4f7e-9538-6dca0f90d42c",
     "name": "Apartamenty Piwniczna Rynek",
-    "description": "Kompletna kolekcja lokalnego API NestJS. Najpierw uruchom request Auth / Pobierz token Supabase. Requesty oznaczone WRITE zmieniają dane. Operacje WRITE TTLock pozostają blokowane, dopóki TTLOCK_WRITES_ENABLED=false.",
+    "description": "Kompletna kolekcja lokalnego API NestJS. Najpierw uruchom request Auth / Pobierz token Supabase. Requesty oznaczone WRITE zmieniają dane. Operacje WRITE TTLock pozostają blokowane, dopóki TTLOCK_WRITES_ENABLED=false. Folder Hostex zawiera obecnie wyłącznie bezpieczne odczyty.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -717,6 +717,70 @@
             "header": [],
             "url": "{{baseUrl}}/access-codes/{{accessCodeId}}?expectedVersion={{accessCodeVersion}}",
             "description": "UWAGA: usuwa kod z TTLock i logicznie oznacza lokalny rekord jako revoked."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 Hostex — tylko odczyt",
+      "description": "Bezpieczne endpointy diagnostyczne Hostex. Token Hostex pozostaje w .env backendu i nigdy nie trafia do Postmana. Ten folder nie zawiera operacji zapisujących.",
+      "item": [
+        {
+          "name": "Status Hostex",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status Hostex jest bezpieczny', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.mode).to.eql('read_only');",
+                  "  pm.expect(body.writesEnabled).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/hostex/status",
+            "description": "Nie wykonuje połączenia z Hostex. Pokazuje wyłącznie lokalny stan konfiguracji i zawsze mode=read_only."
+          },
+          "response": []
+        },
+        {
+          "name": "Lista obiektów Hostex",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.items && body.items[0] && !pm.environment.get('hostexPropertyId')) pm.environment.set('hostexPropertyId', String(body.items[0].id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/hostex/properties?offset=0&limit=100",
+            "description": "Odczytuje properties z Hostex. Pusta lista jest prawidłowa, jeśli konto nie ma jeszcze obiektów."
+          },
+          "response": []
+        },
+        {
+          "name": "Lista rezerwacji Hostex",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/hostex/reservations?offset=0&limit=100&orderBy=booked_at",
+            "description": "Odczytuje bezpieczne podsumowania rezerwacji. Nie zwraca surowego payloadu, telefonu ani e-maila gościa. Pusta lista jest prawidłowa przed utworzeniem rezerwacji lub połączeniem kanału."
           },
           "response": []
         }

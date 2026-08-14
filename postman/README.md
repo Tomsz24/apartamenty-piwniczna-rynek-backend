@@ -13,7 +13,8 @@ Następnie wybierz środowisko **Apartamenty Local** i uzupełnij:
 - `adminPassword` — hasło tego użytkownika Supabase.
 
 Nie wpisuj do Postmana `service_role`, `DATABASE_URL`, sekretów TTLock ani
-`ACCESS_CODE_ENCRYPTION_KEY`.
+`ACCESS_CODE_ENCRYPTION_KEY`. Nie wpisuj również `HOSTEX_ACCESS_TOKEN`: backend
+odczytuje go wyłącznie ze swojego `.env`.
 
 Uruchom backend przez `npm run start:dev`, a następnie wyślij request
 `00 Auth — Supabase / Pobierz token Supabase`. Skrypt zapisze `accessToken` i
@@ -55,3 +56,19 @@ godziny apartamentu. Nie ustawiaj ręcznie `lockId`, cyfr ani godzin przy
 automatycznym tworzeniu. Request ręcznej zmiany godzin służy wyłącznie do
 zatwierdzonego wcześniejszego przyjazdu lub późniejszego wyjazdu. Podfolder
 `AWARYJNE / TECHNICZNE` nie jest częścią zwykłego testu automatu.
+
+## Pierwszy bezpieczny test Hostex
+
+Folder `06 Hostex — tylko odczyt` nie zawiera żadnych requestów zapisujących.
+Przed testem utwórz w Hostex token o zakresie `read-only`, zapisz go jako
+`HOSTEX_ACCESS_TOKEN` w `.env`, ustaw `HOSTEX_ENABLED=true` i zrestartuj backend.
+
+Następnie wykonaj kolejno:
+
+1. `Status Hostex`,
+2. `Lista obiektów Hostex`,
+3. `Lista rezerwacji Hostex`.
+
+Pusta lista jest poprawnym wynikiem dla konta bez obiektów i bez połączonego
+Booking.com. Skrypt drugiego requestu zapisze pierwszy znaleziony identyfikator
+w `hostexPropertyId`, ale nie utworzy ani nie zmieni żadnych danych.
