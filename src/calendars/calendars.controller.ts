@@ -5,10 +5,11 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Param,
+  ParseUUIDPipe,
   Post,
   Put,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { CalendarsService } from './calendars.service';
@@ -21,6 +22,9 @@ import {
 } from './calendars.types';
 import { IcalSyncService } from '../ical-sync/ical-sync.service';
 import { SupabaseAdminGuard } from '../auth/supabase-admin.guard';
+import { ReservationActor } from '../reservations/reservations.types';
+
+type AuthenticatedRequest = { user: ReservationActor };
 
 @Controller('calendars')
 export class CalendarsController {
@@ -36,18 +40,21 @@ export class CalendarsController {
 
   @Post('bookings')
   @UseGuards(SupabaseAdminGuard)
-  async createBooking(@Body() dto: CreateBookingDto) {
-    return this.calendarsService.createManualBooking(dto);
+  async createBooking(
+    @Body() dto: CreateBookingDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.calendarsService.createManualBooking(dto, request.user);
   }
 
   @Put('bookings/:id')
   @UseGuards(SupabaseAdminGuard)
-  async updateBooking(@Param('id') id: string, @Body() dto: UpdateBookingDto) {
-    try {
-      return await this.calendarsService.updateManualBooking(id, dto);
-    } catch {
-      throw new NotFoundException('Rezerwacja nie została znaleziona');
-    }
+  async updateBooking(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateBookingDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.calendarsService.updateManualBooking(id, dto, request.user);
   }
 
   @Post('sync')
@@ -59,15 +66,21 @@ export class CalendarsController {
   @Delete('bookings/:id')
   @UseGuards(SupabaseAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteBooking(@Param('id') id: string): Promise<void> {
-    return this.calendarsService.deleteManualBooking(id);
+  async deleteBooking(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    return this.calendarsService.deleteManualBooking(id, request.user);
   }
 
   @Put('external-notes')
   @UseGuards(SupabaseAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
-  async upsertExternalNote(@Body() dto: UpsertExternalBookingNoteDto): Promise<void> {
-    await this.calendarsService.upsertExternalBookingNote(dto);
+  async upsertExternalNote(
+    @Body() dto: UpsertExternalBookingNoteDto,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    await this.calendarsService.upsertExternalBookingNote(dto, request.user);
   }
 
   @Delete('external-notes')

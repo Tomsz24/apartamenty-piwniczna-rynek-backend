@@ -1,10 +1,21 @@
+import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { CreateReservationDto, UpdateReservationDto } from '../reservations/reservations.dto';
+import { ReservationOrigin, ReservationStatus } from '../reservations/reservations.types';
+
 export interface BookingDto {
   id: string;
   startDate: string;
   endDate: string;
   source: 'manual' | 'external';
+  origin: ReservationOrigin;
+  status: ReservationStatus;
   externalId?: string;
+  guestName?: string | null;
+  guestCount?: number | null;
+  adults?: number | null;
+  children?: number | null;
   note?: string | null;
+  version: number;
 }
 
 export interface ApartmentCalendarDto {
@@ -18,28 +29,36 @@ export interface CalendarsResponseDto {
   rynek: ApartmentCalendarDto;
 }
 
-export interface CreateBookingDto {
-  apartmentId: string;
-  startDate: string;
-  endDate: string;
-  note?: string;
+export class CreateBookingDto extends CreateReservationDto {
+  @IsOptional()
+  @IsString()
   createdBy?: string;
 }
 
-export interface UpdateBookingDto {
-  startDate?: string;
-  endDate?: string;
-  note?: string;
-}
+export class UpdateBookingDto extends UpdateReservationDto {}
 
-export interface UpsertExternalBookingNoteDto {
+export class UpsertExternalBookingNoteDto {
+  @IsUUID()
   apartmentId: string;
+
+  @IsString()
+  @MaxLength(500)
   externalId: string;
+
+  @IsString()
+  @MaxLength(4000)
   note: string;
+
+  @IsOptional()
+  @IsString()
   createdBy?: string;
 }
 
-export interface DeleteExternalBookingNoteDto {
+export class DeleteExternalBookingNoteDto {
+  @IsUUID()
   apartmentId: string;
+
+  @IsString()
+  @MaxLength(500)
   externalId: string;
 }
