@@ -39,8 +39,10 @@ na jednym apartamencie przed pełnym uruchomieniem.
   odtworzenia.
 - [ ] Nie wdrażać backendu korzystającego z nowych tabel przed wykonaniem i
   zweryfikowaniem migracji.
-- [ ] Nie podłączać obu apartamentów do Hostex jednocześnie. Najpierw wdrożenie
-  kontrolne na jednym apartamencie.
+- [ ] Jeżeli apartamenty mają osobne Booking.com Hotel ID, najpierw wykonać
+  kontrolowane wdrożenie jednego apartamentu. Jeżeli oba pokoje są pod jednym
+  Hotel ID, przed połączeniem potwierdzić z Hostex, czy można rozdzielić zakres;
+  nie zakładać, że da się bezpiecznie podłączyć tylko jeden pokój.
 - [ ] Nie uruchamiać połączenia Booking–Hostex w środku sezonu bez gotowego
   planu aktywacji i wycofania zmian.
 - [ ] Nigdy nie umieszczać tokenów Hostex, `clientSecret` TTLock, haseł, kodów do
@@ -261,8 +263,10 @@ zachowane, RLS i uprawnienia zostały sprawdzone, a kopia może zostać odtworzo
   utracony webhook, duplikat webhooka i czasową awarię Hostex.
 - [ ] Przed podłączeniem zapisać eksport/zrzuty konfiguracji Booking: przyszłe
   rezerwacje, ceny, dostępność, minimalne pobyty, ograniczenia i rate plany.
-- [ ] Przygotować checklistę wycofania połączenia oraz awaryjnej ręcznej obsługi.
-- [ ] Wybrać spokojne okno serwisowe i pierwszy apartament testowy.
+- [x] Przygotować checklistę połączenia, wycofania oraz awaryjnej ręcznej
+  obsługi: `docs/checklista-polaczenia-booking-hostex.md`.
+- [ ] Wybrać spokojne okno serwisowe i, jeżeli pozwala na to układ Hotel ID,
+  pierwszy apartament testowy.
 - [ ] Skonfigurować w Hostex ceny, dostępność i restrykcje przed ponownym
   otwarciem sprzedaży.
 - [ ] Potwierdzić ręcznie, że żadna data nie ma ceny `0`, liczba dostępnych pokoi
@@ -450,7 +454,8 @@ jasnej procedury ręcznej.
    istniejących zamków oraz ich możliwości bez resetowania urządzeń.
 7. [ ] Zaimplementować i fizycznie przetestować kody TTLock na jednym zamku.
 8. [ ] Wykonać kopię, migrację i wdrożenie backendu.
-9. [ ] Podłączyć Hostex do jednego apartamentu według checklisty kontrolnej.
+9. [ ] Podłączyć Hostex według checklisty kontrolnej — najpierw jeden apartament,
+   jeżeli Booking.com Hotel ID pozwala rozdzielić zakres połączenia.
 10. [ ] Po okresie obserwacji uruchomić drugi apartament i automatyzację kodów.
 
 ## Dokumentacja dostawców do weryfikacji przy implementacji
