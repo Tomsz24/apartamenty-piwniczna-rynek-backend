@@ -157,9 +157,11 @@ zachowane, RLS i uprawnienia zostały sprawdzone, a kopia może zostać odtworzo
 
 - [ ] Założyć/skonfigurować konto Hostex dla dwóch apartamentów, ale jeszcze nie
   łączyć aktywnych ofert Booking.com.
-- [ ] Potwierdzić z Hostex, że wybrany plan obejmuje potrzebne OpenAPI i webhooki
-  dla obu apartamentów.
-- [ ] Uzyskać token API i umieścić go wyłącznie w sekretach środowiska.
+- [x] Potwierdzić prawdziwym odczytem, że trial obejmuje OpenAPI dla dwóch
+  obiektów.
+- [ ] Potwierdzić, że wybrany plan obejmuje potrzebne webhooki dla obu
+  apartamentów.
+- [x] Uzyskać token API i umieścić go wyłącznie w sekretach środowiska.
 - [ ] Potwierdzić z dokumentacją lub wsparciem Hostex:
   - kierunek synchronizacji rezerwacji, cen, dostępności i ograniczeń,
   - sposób oznaczania modyfikacji i anulowania rezerwacji,
@@ -441,7 +443,7 @@ jasnej procedury ręcznej.
    kolejkę/outbox, mapowania dostawców i kody TTLock.
 3. [ ] Przetestować cały schemat na bazie testowej; nie zapisywać jeszcze do
    produkcyjnego Supabase.
-4. [ ] Uruchomić dostęp do Hostex API bez łączenia aktywnych ofert Booking i
+4. [x] Uruchomić dostęp do Hostex API bez łączenia aktywnych ofert Booking i
    zebrać prawdziwe zanonimizowane odpowiedzi/payloady.
 5. [ ] Rozszerzyć gotowego klienta Hostex o import, webhooki i uzgadnianie danych.
 6. [x] Uzupełnić autoryzację konta właściciela TTLock i odczytać listę

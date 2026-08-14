@@ -150,7 +150,9 @@ export class HostexClient {
       if (!envelope || errorCode === null) {
         throw new BadGatewayException('Hostex zwrócił nieprawidłową odpowiedź');
       }
-      if (errorCode === 0) return envelope.data;
+      // Aktualna dokumentacja Hostex opisuje sukces jako 0, ale prawdziwe
+      // access tokeny hostów zwracają także 200 z komunikatem "Done.".
+      if (errorCode === 0 || errorCode === 200) return envelope.data;
 
       const requestId = this.asNonEmptyString(envelope.request_id);
       if (this.isRetryableProviderCode(errorCode) && attempt < this.readRetryCount) {

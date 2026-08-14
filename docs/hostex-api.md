@@ -72,7 +72,8 @@ dopiero przy implementacji zapisu do naszej bazy.
 ## Obsługa błędów i bezpieczeństwo
 
 - Hostex może zwrócić HTTP `200` również dla błędu. Klient zawsze sprawdza
-  `error_code`; sukces to wyłącznie `0`.
+  `error_code`. Dokumentacja opisuje sukces jako `0`, natomiast prawdziwy token
+  hosta zwrócił `200` i `Done.`; klient obsługuje oba warianty jako sukces.
 - Kod `420` oznacza problem planu/subskrypcji, `401` tokenu lub zakresu, a `429`
   limit zapytań.
 - Odczyt po przejściowym błędzie `500/502/503/504` jest ponawiany najwyżej tyle

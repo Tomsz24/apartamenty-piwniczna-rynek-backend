@@ -161,8 +161,8 @@ test('calls Hostex with its access-token header and snake_case filters', async (
     return new Response(
       JSON.stringify({
         request_id: 'RT-1',
-        error_code: 0,
-        error_msg: '',
+        error_code: 200,
+        error_msg: 'Done.',
         data: { reservations: [], total: 0 },
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
