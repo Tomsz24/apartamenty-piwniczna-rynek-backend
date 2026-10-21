@@ -8,6 +8,18 @@ export class HealthController {
 
   constructor(@Inject('PG_POOL') private readonly pgPool: Pool) {}
 
+  @Get()
+  checkLiveness() {
+    return { status: 'ok' };
+  }
+
+  @Get('ready')
+  @UseGuards(SupabaseAdminGuard)
+  async checkReadiness() {
+    await this.pgPool.query('SELECT 1');
+    return { status: 'ok', database: 'ok' };
+  }
+
   @Get('db')
   @UseGuards(SupabaseAdminGuard)
   async checkDB() {

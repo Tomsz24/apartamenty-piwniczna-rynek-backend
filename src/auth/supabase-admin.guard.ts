@@ -40,8 +40,6 @@ export class SupabaseAdminGuard implements CanActivate {
     this.supabasePublishableKey = supabasePublishableKey;
     this.adminEmails = new Set(admins);
 
-    this.logger.log(`Supabase URL: ${this.supabaseUrl}`);
-    this.logger.log(`Admins: ${admins.join(', ') || '(none)'}`);
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -81,10 +79,7 @@ export class SupabaseAdminGuard implements CanActivate {
     });
 
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      this.logger.warn(
-        `Supabase /auth/v1/user rejected token: status=${res.status} body=${body}`,
-      );
+      this.logger.warn(`Supabase /auth/v1/user rejected token: status=${res.status}`);
       throw new UnauthorizedException('Nieprawidłowy lub wygasły token');
     }
 
