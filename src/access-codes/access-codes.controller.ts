@@ -21,9 +21,11 @@ import {
   ApplyAccessCodeDraftDto,
   DeleteAccessCodeQueryDto,
   ListAccessCodesQueryDto,
+  SetApartmentLockDto,
   UpdateAccessCodeDto,
 } from './access-codes.dto';
 import { AccessCodesService } from './access-codes.service';
+import { LockMappingDto, LockMappingsService } from './lock-mappings.service';
 import {
   AccessCodeDto,
   AccessCodeDraftDto,
@@ -39,7 +41,19 @@ type AuthenticatedRequest = { user: ReservationActor };
 @Controller('access-codes')
 @UseGuards(SupabaseAdminGuard)
 export class AccessCodesController {
-  constructor(private readonly accessCodesService: AccessCodesService) {}
+  constructor(
+    private readonly accessCodesService: AccessCodesService,
+    private readonly lockMappingsService: LockMappingsService,
+  ) {}
+
+  @Put('apartments/:apartmentId/lock')
+  setApartmentLock(
+    @Param('apartmentId', ParseUUIDPipe) apartmentId: string,
+    @Body() dto: SetApartmentLockDto,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<LockMappingDto> {
+    return this.lockMappingsService.setApartmentLock(apartmentId, dto.lockId, request.user);
+  }
 
   @Get('status')
   getStatus(): AccessCodesStatusDto {
