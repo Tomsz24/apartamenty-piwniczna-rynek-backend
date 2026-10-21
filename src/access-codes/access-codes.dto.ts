@@ -33,6 +33,13 @@ export class CreateAccessCodeDto {
   name?: string;
 }
 
+export class SetApartmentLockDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  lockId!: number;
+}
+
 export class UpdateAccessCodeDto {
   @IsOptional()
   @IsISO8601({ strict: true })

@@ -230,6 +230,32 @@ nie osiągnięto naszego limitu paginacji; nie dowodzi kompletności archiwum po
 stronie TTLock. Jeżeli statystyki mają kiedyś obejmować okres dłuższy niż
 historia dostawcy, trzeba będzie przechowywać lokalne agregaty.
 
+## Przypisanie zamków do apartamentów
+
+Kody gości powstają wyłącznie na zamkach drzwi apartamentów. Drzwi wejściowe do
+budynku (`19054486`) mają stały kod podany w szablonie wiadomości przyjazdowej i
+nie są zarządzane przez backend.
+
+Migracja `20261021190000_ttlock_lock_mappings.sql` przypisuje oba zamki:
+
+| Zamek TTLock | Alias w aplikacji TTLock | Apartament |
+| --- | --- | --- |
+| `19051854` | Apartament z balkonem i widokiem na góry | Apartament - Widok na góry |
+| `19051822` | Apartament z kominkiem i widokiem na Rynek | Apartament - Widok na rynek |
+
+Zmiana przypisania, np. po wymianie zamka:
+
+```http
+PUT /api/access-codes/apartments/:apartmentId/lock
+Content-Type: application/json
+
+{ "lockId": 19051854 }
+```
+
+Backend sprawdza, czy zamek istnieje na koncie TTLock, wyłącza poprzedni zamek
+apartamentu i odmawia (`409`), jeśli poprzedni lub przenoszony zamek ma jeszcze
+aktywne kody gości. Bieżące przypisania pokazuje `GET /api/access-codes/overview`.
+
 ## Odporność na częściowe błędy
 
 PostgreSQL i TTLock nie współdzielą jednej transakcji. Dlatego przed operacją

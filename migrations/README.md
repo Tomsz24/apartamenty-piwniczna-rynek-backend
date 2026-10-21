@@ -106,3 +106,8 @@ powiadomień przy nowej, zmienionej i anulowanej rezerwacji oraz przy błędzie
 kodu TTLock, a także kolumnę `conversation_id` w inboxie webhooków. Błąd przy
 tworzeniu powiadomienia nigdy nie blokuje zapisu rezerwacji. Opis:
 `docs/notifications-api.md`.
+
+Migracja `20261021190000_ttlock_lock_mappings.sql` przypisuje zamki TTLock
+`19051854` (Widok na góry) i `19051822` (Widok na rynek) do apartamentów. Drzwi
+wejściowe mają stały kod i celowo nie są przypisywane. Istniejące przypisania
+nie są nadpisywane. Opis: `docs/access-codes-api.md`.
