@@ -115,6 +115,18 @@ export class TtlockService {
     return sanitizeLockList(payload);
   }
 
+  async checkConnection(): Promise<{ connected: boolean; checkedAt: string }> {
+    if (!this.getStatus().ready) {
+      return { connected: false, checkedAt: new Date().toISOString() };
+    }
+    try {
+      await this.listLocks();
+      return { connected: true, checkedAt: new Date().toISOString() };
+    } catch {
+      return { connected: false, checkedAt: new Date().toISOString() };
+    }
+  }
+
   async listGateways(): Promise<TtlockGatewaySummary[]> {
     this.assertReady();
     const payload = await this.authorizedRequest('/v3/gateway/list', {

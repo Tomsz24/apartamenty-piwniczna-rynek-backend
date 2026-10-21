@@ -1,4 +1,4 @@
-export const RESERVATION_ORIGINS = ['manual', 'booking_email', 'booking_ical'] as const;
+export const RESERVATION_ORIGINS = ['manual', 'booking_email', 'booking_ical', 'hostex'] as const;
 export type ReservationOrigin = (typeof RESERVATION_ORIGINS)[number];
 
 export const RESERVATION_STATUSES = [
@@ -22,6 +22,18 @@ export interface ReservationDto {
   guestCount: number | null;
   adults: number | null;
   children: number | null;
+  infants: number | null;
+  pets: number | null;
+  childAges: number[] | null;
+  guestPhone: string | null;
+  guestEmail: string | null;
+  totalRateAmount: number | null;
+  amountReceived: number | null;
+  currency: string | null;
+  paymentStatus: string | null;
+  channelType: string | null;
+  conversationId: string | null;
+  arrivalMessageSentAt: string | null;
   note: string | null;
   externalId?: string;
   createdBy: string;

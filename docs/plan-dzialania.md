@@ -1,3 +1,7 @@
+> Aktualizacja 21.10.2026: backend korzysta z jednego `.env`. Aktywny import
+> iCal został usunięty; źródłem rezerwacji jest Hostex. Poniższe wcześniejsze
+> etapy dotyczące iCal i osobnego DEV zachowano jako historię planu.
+
 # Plan działania: rezerwacje, Hostex i TTLock
 
 Stan na: **2026-08-14**
@@ -183,6 +187,13 @@ zachowane, RLS i uprawnienia zostały sprawdzone, a kopia może zostać odtworzo
   dostawcy, aby domena rezerwacji nie zależała bezpośrednio od Hostex.
 - [x] Dodać timeouty, ograniczone retry z backoffem, obsługę `429`, błędów 5xx i
   bezpieczne logowanie bez tokenów i danych osobowych.
+- [x] Dodać endpoint administratora do odczytu i zapisu mapowania obiektów oraz
+  walidację identyfikatorów po obu stronach.
+- [x] Dodać ręczny podgląd importu rezerwacji z paginacją, idempotencją,
+  mapowaniem statusów i ochroną przed kolizją z istniejącymi terminami.
+- [x] Wykonać migrację `006_hostex_reservations.sql` w produkcyjnym Supabase;
+  potwierdzić mapowanie obu apartamentów. Podgląd importu przed pierwszym
+  zapisem pozostaje do wykonania.
 - [ ] Pobrać listę properties/listings i przypisać każdy identyfikator do
   właściwego `apartment_id`.
 - [ ] Zapisać oraz ręcznie zweryfikować mapowanie apartamentu, oferty Booking i
@@ -212,19 +223,19 @@ zachowane, RLS i uprawnienia zostały sprawdzone, a kopia może zostać odtworzo
 
 ### 2.4. Webhooki i uzgadnianie danych
 
-- [ ] Udostępnić HTTPS endpoint webhooków na VPS.
-- [ ] Weryfikować nagłówek `Hostex-Webhook-Secret-Token` i odrzucać niepoprawne
+- [ ] Udostępnić HTTPS endpoint webhooków na VPS (kod gotowy, czeka na wdrożenie).
+- [x] Weryfikować nagłówek `Hostex-Webhook-Secret-Token` i odrzucać niepoprawne
   żądania.
-- [ ] Zapisać zdarzenie do inboxa i odpowiedzieć `200` w czasie krótszym niż
+- [x] Zapisać zdarzenie do inboxa i odpowiedzieć `200` w czasie krótszym niż
   3 sekundy; właściwe przetwarzanie wykonać asynchronicznie.
-- [ ] Obsłużyć co najmniej `reservation_created` i `reservation_updated`.
+- [x] Obsłużyć co najmniej `reservation_created` i `reservation_updated`.
 - [ ] Obsłużyć `property_availability_updated` i `listing_calendar_updated`, gdy
   włączymy zarządzanie kalendarzem.
-- [ ] Ignorować nieznane pola payloadu i bezpiecznie rejestrować nieznany typ
+- [x] Ignorować nieznane pola payloadu i bezpiecznie rejestrować nieznany typ
   zdarzenia zamiast odrzucać cały webhook.
-- [ ] Deduplikować webhooki i zabezpieczyć przetwarzanie przed równoległym
+- [x] Deduplikować webhooki i zabezpieczyć przetwarzanie przed równoległym
   wykonaniem.
-- [ ] Po webhooku pobierać pełny aktualny obiekt z API, ponieważ payload webhooka
+- [x] Po webhooku pobierać pełny aktualny obiekt z API, ponieważ payload webhooka
   może zawierać tylko identyfikatory zdarzenia.
 - [ ] Dodać okresowe uzgadnianie rezerwacji i kalendarza, ponieważ Hostex nie
   ponawia webhooka, jeśli nie otrzyma odpowiedzi w wymaganym czasie.
@@ -346,7 +357,9 @@ opublikowane z niebezpieczną wartością.
 - [x] Przygotować migrację `005_ttlock_access_codes.sql` z mapowaniem zamków,
   konfigurowalnymi godzinami apartamentów, szyfrowaną historią i szkicami
   awaryjnymi, stanem synchronizacji, statystykami oraz audytem.
-- [ ] Wykonać kopię bazy i dopiero potem uruchomić migrację 005.
+- [x] Uruchomić migrację 005 w produkcyjnym Supabase po wyraźnej zgodzie
+  właściciela na zmiany w bazie. Nie wykonano kopii `pg_dump`, bo narzędzie
+  nie jest dostępne w tym środowisku; migracja nie zmieniła danych rezerwacji.
 - [ ] Ustawić w sekretach `ACCESS_CODE_ENCRYPTION_KEY` i zachować jego kopię
   poza repozytorium; utrata klucza uniemożliwi odczyt zapisanych kodów.
 - [ ] Przypisać dwa zamki apartamentów do rekordów `apartments`; wspólne drzwi
@@ -453,7 +466,8 @@ jasnej procedury ręcznej.
 6. [x] Uzupełnić autoryzację konta właściciela TTLock i odczytać listę
    istniejących zamków oraz ich możliwości bez resetowania urządzeń.
 7. [ ] Zaimplementować i fizycznie przetestować kody TTLock na jednym zamku.
-8. [ ] Wykonać kopię, migrację i wdrożenie backendu.
+8. [ ] Wykonać kopię bazy, uruchomić migracje (005 i 006 są już zastosowane)
+   i wdrożyć backend.
 9. [ ] Podłączyć Hostex według checklisty kontrolnej — najpierw jeden apartament,
    jeżeli Booking.com Hotel ID pozwala rozdzielić zakres połączenia.
 10. [ ] Po okresie obserwacji uruchomić drugi apartament i automatyzację kodów.

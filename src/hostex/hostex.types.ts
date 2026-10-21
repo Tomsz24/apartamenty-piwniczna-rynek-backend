@@ -48,10 +48,15 @@ export type HostexChannelType = (typeof HOSTEX_CHANNEL_TYPES)[number];
 export type HostexIntegrationStatus = {
   enabled: boolean;
   ready: boolean;
-  mode: 'read_only';
-  writesEnabled: false;
+  mode: 'read_only' | 'read_write';
+  writesEnabled: boolean;
   accessTokenConfigured: boolean;
   apiBaseUrlConfigured: boolean;
+};
+
+export type IntegrationConnectionStatus = {
+  connected: boolean;
+  checkedAt: string;
 };
 
 export type HostexChannelSummary = {
@@ -86,6 +91,7 @@ export type HostexReservationSummary = {
   channelId: string | null;
   propertyId: number;
   channelType: string;
+  conversationId: string | null;
   listingId: string | null;
   checkInDate: string;
   checkOutDate: string;
@@ -96,6 +102,12 @@ export type HostexReservationSummary = {
   numberOfPets: number | null;
   status: string;
   guestName: string | null;
+  guestPhone: string | null;
+  guestEmail: string | null;
+  totalRateAmount: number | null;
+  amountReceived: number | null;
+  currency: string | null;
+  paymentStatus: string | null;
   cancelledAt: string | null;
   bookedAt: string;
   createdAt: string;
@@ -106,6 +118,31 @@ export type HostexPage<T> = {
   total: number;
   offset: number;
   limit: number;
+};
+
+export type HostexConversationMessage = {
+  id: string;
+  text: string;
+  isOutgoing: boolean;
+  sentAt: string | null;
+  attachments: string[];
+};
+
+export type HostexConversationSummary = {
+  id: string;
+  channelType: string;
+  lastMessageAt: string | null;
+  guestName: string | null;
+  propertyTitle: string | null;
+  checkInDate: string | null;
+  checkOutDate: string | null;
+  reservationCode: string | null;
+  lastMessage: string | null;
+  unreadCount: number;
+};
+
+export type HostexConversationDetails = HostexConversationSummary & {
+  messages: HostexConversationMessage[];
 };
 
 export type HostexPropertiesQuery = {

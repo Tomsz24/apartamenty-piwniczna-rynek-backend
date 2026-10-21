@@ -79,6 +79,58 @@ test('builds default access windows in Europe/Warsaw across summer and winter ti
   assert.equal(formatDateInTimeZone(summer.validFrom, 'Europe/Warsaw'), '2026-08-20');
 });
 
+test('uses the agreed 12:00 arrival and 11:00 departure access window year round', () => {
+  const summer = buildAccessCodeValidity({
+    startDate: '2026-08-20',
+    endDate: '2026-08-23',
+    checkInTime: '12:00',
+    checkOutTime: '11:00',
+    timeZone: 'Europe/Warsaw',
+  });
+  const winter = buildAccessCodeValidity({
+    startDate: '2026-01-10',
+    endDate: '2026-01-12',
+    checkInTime: '12:00',
+    checkOutTime: '11:00',
+    timeZone: 'Europe/Warsaw',
+  });
+
+  assert.equal(summer.validFrom.toISOString(), '2026-08-20T10:00:00.000Z');
+  assert.equal(summer.validUntil.toISOString(), '2026-08-23T09:00:00.000Z');
+  assert.equal(winter.validFrom.toISOString(), '2026-01-10T11:00:00.000Z');
+  assert.equal(winter.validUntil.toISOString(), '2026-01-12T10:00:00.000Z');
+});
+
+test('runs automatic access-code lifecycle only when explicitly enabled and TTLock writes are enabled', async () => {
+  const key = Buffer.alloc(32, 31).toString('base64');
+  const cryptoService = new AccessCodeCryptoService(
+    new ConfigService({ ACCESS_CODE_ENCRYPTION_KEY: key }),
+  );
+  const events = [];
+  const service = new AccessCodesService(
+    { query: async () => ({ rows: [] }) },
+    { getStatus: () => ({ writesEnabled: true }) },
+    cryptoService,
+    new ConfigService({ ACCESS_CODE_AUTOMATION_ENABLED: 'true' }),
+  );
+  service.reconcileCancelledReservations = async () => events.push('cancelled');
+  service.reconcileChangedReservationDates = async () => events.push('updated');
+  service.createDueReservationCodes = async () => events.push('created');
+
+  await service.handleScheduledLifecycle();
+  assert.deepEqual(events, ['cancelled', 'updated', 'created']);
+
+  const disabledService = new AccessCodesService(
+    { query: async () => ({ rows: [] }) },
+    { getStatus: () => ({ writesEnabled: true }) },
+    cryptoService,
+    new ConfigService({ ACCESS_CODE_AUTOMATION_ENABLED: 'false' }),
+  );
+  disabledService.reconcileCancelledReservations = async () => events.push('unexpected');
+  await disabledService.handleScheduledLifecycle();
+  assert.equal(events.includes('unexpected'), false);
+});
+
 test('validates creation and optimistic updates without accepting a caller-provided code', async () => {
   const creation = plainToInstance(CreateAccessCodeDto, {
     reservationId: '123e4567-e89b-42d3-a456-426614174000',

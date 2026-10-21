@@ -3,6 +3,7 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  IsNotEmpty,
   IsString,
   Matches,
   Max,
@@ -115,4 +116,27 @@ export class ListHostexReservationsQueryDto {
   @IsOptional()
   @IsIn(HOSTEX_CHANNEL_TYPES)
   channelType?: HostexChannelType;
+}
+
+export class SendHostexMessageDto {
+  @Transform(trimString)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(10_000)
+  message: string;
+}
+
+export class ListHostexConversationsQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
 }

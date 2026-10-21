@@ -1,0 +1,39 @@
+// Optional real PostgreSQL engine test: set PGLITE_MODULE to an installed @electric-sql/pglite.
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const {readFileSync} = require('node:fs');
+const {join} = require('node:path');
+test('PostgreSQL outbox captures business changes atomically and ignores sync noise', {skip: !process.env.PGLITE_MODULE}, async () => {
+  const {PGlite} = require(process.env.PGLITE_MODULE);
+  const db = new PGlite();
+  try {
+    await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated;
+      CREATE TABLE apartments(id uuid PRIMARY KEY, name text);
+      CREATE TABLE reservations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), apartment_id uuid, origin text, status text, start_date date, end_date date, guest_name text, note text, version integer DEFAULT 1, last_seen_at timestamptz, metadata jsonb);
+      INSERT INTO apartments VALUES ('00000000-0000-0000-0000-000000000001','Góry');`);
+    const migration = readFileSync(join(__dirname,'../migrations/20261021144218_reservation_email_outbox.sql'),'utf8');
+    await db.exec(migration);
+    await db.exec(migration); // repeatable
+    const create = async (status='confirmed',origin='hostex') => (await db.query(`INSERT INTO reservations(apartment_id,origin,status,start_date,end_date,guest_name) VALUES('00000000-0000-0000-0000-000000000001',$1,$2,CURRENT_DATE+10,CURRENT_DATE+12,'Anna') RETURNING id`, [origin,status])).rows[0].id;
+    const id = await create();
+    let rows = (await db.query('SELECT * FROM reservation_email_outbox')).rows;
+    assert.equal(rows.length,1); assert.equal(rows[0].event_type,'new_reservation');
+    assert.equal(rows[0].snapshot.apartment_name,'Góry');
+    await db.query(`UPDATE reservations SET last_seen_at=NOW(),version=version+1,metadata='{"sync":true}' WHERE id=$1`,[id]);
+    assert.equal((await db.query('SELECT * FROM reservation_email_outbox')).rows.length,1);
+    await db.query(`UPDATE reservations SET guest_name='Jan' WHERE id=$1`,[id]);
+    rows = (await db.query("SELECT * FROM reservation_email_outbox WHERE event_type='reservation_modified'")).rows;
+    assert.equal(rows[0].previous_snapshot.guest_name,'Anna'); assert.equal(rows[0].snapshot.guest_name,'Jan');
+    await db.query(`UPDATE reservations SET status='cancelled' WHERE id=$1`,[id]);
+    assert.equal((await db.query("SELECT * FROM reservation_email_outbox WHERE event_type='reservation_cancelled'")).rows.length,1);
+    await db.query(`UPDATE reservations SET status='cancelled' WHERE id=$1`,[id]);
+    await create('blocked','manual'); await create('cancelled'); await create('confirmed','booking_ical');
+    assert.equal((await db.query('SELECT * FROM reservation_email_outbox')).rows.length,3);
+    await db.exec('BEGIN'); await create(); await db.exec('ROLLBACK');
+    assert.equal((await db.query('SELECT * FROM reservation_email_outbox')).rows.length,3);
+    const security = (await db.query("SELECT relrowsecurity FROM pg_class WHERE relname='reservation_email_outbox'")).rows[0];
+    assert.equal(security.relrowsecurity,true);
+    await db.exec('SET ROLE anon');
+    await assert.rejects(db.query('SELECT * FROM reservation_email_outbox'), /permission denied/);
+  } finally {await db.close();}
+});

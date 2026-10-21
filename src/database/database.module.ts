@@ -7,8 +7,9 @@ import { Pool } from 'pg';
     {
       provide: 'PG_POOL',
       useFactory: () => {
+        const databaseUrl = process.env.DATABASE_URL;
         return new Pool({
-          connectionString: process.env.DATABASE_URL,
+          connectionString: databaseUrl,
           ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
         });
       },

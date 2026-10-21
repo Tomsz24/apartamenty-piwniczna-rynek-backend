@@ -4,6 +4,8 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 import {
@@ -20,12 +22,16 @@ import {
   ReservationStatus,
 } from './reservations.types';
 import { validateDateRange } from './reservations.domain';
+import { HostexReservationWritesService } from '../hostex/hostex-reservation-writes.service';
 
 type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>;
 
 @Injectable()
 export class ReservationsService {
-  constructor(@Inject('PG_POOL') private readonly pool: Pool) {}
+  constructor(
+    @Inject('PG_POOL') private readonly pool: Pool,
+    @Optional() private readonly hostexWritesService?: HostexReservationWritesService,
+  ) {}
 
   async list(query: ListReservationsQueryDto): Promise<ReservationDto[]> {
     if (query.from && query.to) this.assertValidDateRange(query.from, query.to);
@@ -43,6 +49,8 @@ export class ReservationsService {
     if (query.to) addCondition('r.start_date < ?', query.to);
     if (query.status) addCondition('r.status = ?', query.status);
     if (!query.includeCancelled && !query.status) conditions.push(`r.status <> 'cancelled'`);
+    // iCal is retained as legacy evidence, not as the active reservation source.
+    if (!query.includeLegacy) conditions.push(`r.origin IN ('manual', 'hostex')`);
 
     const result = await this.pool.query(
       `
@@ -57,7 +65,7 @@ export class ReservationsService {
           FROM reservation_source_refs AS refs
           WHERE refs.reservation_id = r.id
           ORDER BY refs.is_current DESC,
-                   CASE refs.source_system WHEN 'booking_email' THEN 0 ELSE 1 END,
+                   CASE refs.source_system WHEN 'hostex' THEN 0 WHEN 'booking_email' THEN 1 ELSE 2 END,
                    refs.last_seen_at DESC
           LIMIT 1
         ) AS source_ref ON true
@@ -84,7 +92,7 @@ export class ReservationsService {
           FROM reservation_source_refs AS refs
           WHERE refs.reservation_id = r.id
           ORDER BY refs.is_current DESC,
-                   CASE refs.source_system WHEN 'booking_email' THEN 0 ELSE 1 END,
+                   CASE refs.source_system WHEN 'hostex' THEN 0 WHEN 'booking_email' THEN 1 ELSE 2 END,
                    refs.last_seen_at DESC
           LIMIT 1
         ) AS source_ref ON true
@@ -105,13 +113,52 @@ export class ReservationsService {
     actor: ReservationActor | string,
   ): Promise<ReservationDto> {
     this.assertValidDateRange(dto.startDate, dto.endDate);
-    this.assertGuestCounts(dto);
+    const pricedDto = {
+      ...dto,
+      children: dto.children ?? 0,
+      guestCount: dto.guestCount ?? ((dto.adults ?? 0) + (dto.children ?? 0)),
+    };
+    this.assertGuestCounts(pricedDto, true);
+    if (pricedDto.amountReceived !== undefined
+      && pricedDto.amountReceived > pricedDto.totalRateAmount) {
+      throw new BadRequestException('Wpłata nie może być wyższa niż cena rezerwacji');
+    }
 
     if (dto.status === 'cancelled' || dto.status === 'needs_review') {
       throw new BadRequestException('Nowa ręczna rezerwacja musi być aktywna');
     }
 
     const createdBy = this.actorName(actor);
+
+    if (this.hostexWritesService) {
+      const created = await this.hostexWritesService.create(pricedDto);
+      const guestCount = this.resolveGuestCount(pricedDto);
+      const updated = await this.pool.query(
+        `UPDATE reservations SET
+           guest_count = $2, adults = $3, children = $4, child_ages = $5,
+           guest_phone = COALESCE($6::text, guest_phone),
+           guest_email = COALESCE($7::text, guest_email),
+           note = $8, created_by = $9,
+           metadata = metadata || $10::jsonb,
+           updated_at = NOW(), version = version + 1
+         WHERE id = $1
+         RETURNING id`,
+        [
+          created.reservationId,
+          guestCount,
+          pricedDto.adults ?? null,
+          pricedDto.children ?? null,
+          pricedDto.childAges ?? null,
+          this.nullIfEmpty(pricedDto.guestPhone),
+          this.nullIfEmpty(pricedDto.guestEmail),
+          this.nullIfEmpty(pricedDto.note),
+          createdBy,
+          JSON.stringify({ createdFromApp: true, clientChannelId: created.clientChannelId }),
+        ],
+      );
+      if (!updated.rows[0]) throw new NotFoundException('Hostex utworzył pobyt, ale nie udało się odświeżyć lokalnego rekordu');
+      return this.getById(created.reservationId);
+    }
 
     return this.withTransaction(async (client) => {
       await this.lockApartment(client, dto.apartmentId);
@@ -122,7 +169,7 @@ export class ReservationsService {
         endDate: dto.endDate,
       });
 
-      const guestCount = this.resolveGuestCount(dto);
+      const guestCount = this.resolveGuestCount(pricedDto);
       const result = await client.query(
         `
           INSERT INTO reservations (
@@ -135,23 +182,38 @@ export class ReservationsService {
             guest_count,
             adults,
             children,
+            child_ages,
+            guest_phone,
+            guest_email,
             note,
-            created_by
+            created_by,
+            total_rate_amount,
+            amount_received,
+            currency,
+            payment_status
           )
-          VALUES ($1, 'manual', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          VALUES ($1, 'manual', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'PLN', $16)
           RETURNING id
         `,
         [
-          dto.apartmentId,
-          dto.status ?? 'confirmed',
-          dto.startDate,
-          dto.endDate,
-          this.nullIfEmpty(dto.guestName),
+          pricedDto.apartmentId,
+          pricedDto.status ?? 'confirmed',
+          pricedDto.startDate,
+          pricedDto.endDate,
+          this.nullIfEmpty(pricedDto.guestName),
           guestCount,
-          dto.adults ?? null,
-          dto.children ?? null,
-          this.nullIfEmpty(dto.note),
+          pricedDto.adults ?? null,
+          pricedDto.children ?? null,
+          pricedDto.childAges ?? null,
+          this.nullIfEmpty(pricedDto.guestPhone),
+          this.nullIfEmpty(pricedDto.guestEmail),
+          this.nullIfEmpty(pricedDto.note),
           createdBy,
+          pricedDto.totalRateAmount,
+          pricedDto.amountReceived ?? null,
+          pricedDto.totalRateAmount > 0 && (pricedDto.amountReceived ?? 0) >= pricedDto.totalRateAmount
+              ? 'paid'
+              : (pricedDto.amountReceived ?? 0) > 0 ? 'partially_paid' : 'unpaid',
         ],
       );
 
@@ -194,9 +256,12 @@ export class ReservationsService {
         dto.status !== undefined;
 
       if (existing.origin !== 'manual' && scheduleChanged) {
-        throw new ConflictException(
-          'Daty i status rezerwacji Booking są aktualizowane przez synchronizację. Ręcznie można zmienić dane gości i notatkę.',
-        );
+        if (existing.origin !== 'hostex') {
+          throw new ConflictException('Rezerwacji archiwalnej nie można edytować');
+        }
+        if (dto.apartmentId !== undefined && dto.apartmentId !== existing.apartment_id) {
+          throw new ConflictException('Zmiana apartamentu rezerwacji Hostex nie jest obsługiwana z aplikacji');
+        }
       }
 
       const apartmentId = dto.apartmentId ?? existing.apartment_id;
@@ -209,6 +274,7 @@ export class ReservationsService {
         guestCount: dto.guestCount === undefined ? existing.guest_count : dto.guestCount,
         adults: dto.adults === undefined ? existing.adults : dto.adults,
         children: dto.children === undefined ? existing.children : dto.children,
+        childAges: dto.childAges === undefined ? existing.child_ages : dto.childAges,
       });
 
       await this.lockApartment(client, apartmentId);
@@ -221,6 +287,23 @@ export class ReservationsService {
           endDate,
           excludeReservationId: id,
         });
+      }
+
+      const externalFieldsChanged = existing.origin === 'hostex' && (
+        dto.startDate !== undefined || dto.endDate !== undefined || dto.status !== undefined ||
+        dto.guestName !== undefined || dto.guestCount !== undefined || dto.adults !== undefined ||
+        dto.children !== undefined || dto.guestPhone !== undefined || dto.guestEmail !== undefined
+      );
+      if (externalFieldsChanged) {
+        if (!this.hostexWritesService) {
+          throw new ServiceUnavailableException('Synchronizacja zmian z Hostex nie jest skonfigurowana');
+        }
+        const hostexUpdate = { ...dto };
+        if (dto.guestCount === undefined && (dto.adults !== undefined || dto.children !== undefined)) {
+          hostexUpdate.guestCount =
+            (dto.adults ?? existing.adults ?? 0) + (dto.children ?? existing.children ?? 0);
+        }
+        await this.hostexWritesService.update(id, hostexUpdate);
       }
 
       const updates: string[] = [];
@@ -241,7 +324,13 @@ export class ReservationsService {
       if (dto.guestCount !== undefined) setValue('guest_count', dto.guestCount);
       if (dto.adults !== undefined) setValue('adults', dto.adults);
       if (dto.children !== undefined) setValue('children', dto.children);
+      if (dto.childAges !== undefined) setValue('child_ages', dto.childAges);
+      if (dto.guestPhone !== undefined) setValue('guest_phone', this.nullIfEmpty(dto.guestPhone));
+      if (dto.guestEmail !== undefined) setValue('guest_email', this.nullIfEmpty(dto.guestEmail));
       if (dto.note !== undefined) setValue('note', this.nullIfEmpty(dto.note));
+      if (dto.arrivalMessageSentAt !== undefined) {
+        setValue('arrival_message_sent_at', dto.arrivalMessageSentAt);
+      }
 
       updates.push('updated_at = NOW()', 'version = version + 1');
       values.push(id);
@@ -264,9 +353,11 @@ export class ReservationsService {
       if (result.rows.length === 0) {
         throw new NotFoundException('Rezerwacja nie została znaleziona');
       }
-      if (result.rows[0].origin !== 'manual') {
+      if (result.rows[0].origin === 'hostex' && this.hostexWritesService) {
+        if (result.rows[0].status !== 'cancelled') await this.hostexWritesService.cancel(id);
+      } else if (result.rows[0].origin !== 'manual') {
         throw new ConflictException(
-          'Rezerwacji Booking nie można usunąć ręcznie. Jej anulowanie musi przyjść ze źródła.',
+          'Rezerwacji archiwalnej nie można anulować.',
         );
       }
 
@@ -464,6 +555,7 @@ export class ReservationsService {
         SELECT id
         FROM reservations
         WHERE apartment_id = $1
+          AND origin IN ('manual', 'hostex')
           AND status <> 'cancelled'
           AND start_date < $3
           AND end_date > $2
@@ -503,7 +595,8 @@ export class ReservationsService {
     guestCount?: number | null;
     adults?: number | null;
     children?: number | null;
-  }): void {
+    childAges?: number[] | null;
+  }, requireAdult = false): void {
     const adults = values.adults ?? null;
     const children = values.children ?? null;
     const guestCount = values.guestCount ?? null;
@@ -518,6 +611,21 @@ export class ReservationsService {
 
     if (adults !== null && children !== null && adults + children < 1) {
       throw new BadRequestException('Rezerwacja musi obejmować przynajmniej jednego gościa');
+    }
+
+    if (requireAdult && (adults === null || adults < 1)) {
+      throw new BadRequestException('Rezerwacja musi obejmować przynajmniej jednego dorosłego');
+    }
+
+    const totalGuests = guestCount ?? (adults !== null && children !== null
+      ? adults + children
+      : adults ?? children);
+    if (totalGuests !== null && totalGuests !== undefined && totalGuests > 4) {
+      throw new BadRequestException('Apartament może pomieścić maksymalnie 4 osoby');
+    }
+
+    if (values.childAges != null && children != null && values.childAges.length !== children) {
+      throw new BadRequestException('Podaj wiek każdego dziecka albo usuń listę wieku dzieci');
     }
   }
 
@@ -548,6 +656,22 @@ export class ReservationsService {
       guestCount: row.guest_count ?? null,
       adults: row.adults ?? null,
       children: row.children ?? null,
+      infants: row.infants ?? null,
+      pets: row.pets ?? null,
+      childAges: row.child_ages ?? null,
+      guestPhone: row.guest_phone ?? null,
+      guestEmail: row.guest_email ?? null,
+      totalRateAmount: row.total_rate_amount === null || row.total_rate_amount === undefined
+        ? null : Number(row.total_rate_amount),
+      amountReceived: row.amount_received === null || row.amount_received === undefined
+        ? null : Number(row.amount_received),
+      currency: row.currency ?? null,
+      paymentStatus: row.payment_status ?? null,
+      channelType: row.metadata?.channelType ?? null,
+      conversationId: row.metadata?.conversationId ?? null,
+      arrivalMessageSentAt: row.arrival_message_sent_at
+        ? this.formatTimestamp(row.arrival_message_sent_at)
+        : null,
       note: row.note ?? null,
       externalId: row.external_id ?? undefined,
       createdBy: row.created_by,
@@ -569,7 +693,13 @@ export class ReservationsService {
 
   private formatDate(value: Date | string): string {
     if (typeof value === 'string') return value.split('T')[0];
-    return value.toISOString().slice(0, 10);
+    // PostgreSQL DATE values are parsed by node-postgres as local-midnight
+    // Date objects. Converting those to UTC can move the calendar date back
+    // one day in positive UTC offsets (for example, Europe/Warsaw).
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   private formatTimestamp(value: Date | string): string {

@@ -61,6 +61,7 @@ export type AccessCodeUsageDto = {
 export type AccessCodesStatusDto = {
   encryptionConfigured: boolean;
   ttlockWritesEnabled: boolean;
+  automationEnabled: boolean;
   writeMode: 'blocked' | 'controlled_test';
 };
 

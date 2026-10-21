@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  GoneException,
   HttpCode,
   HttpStatus,
   Param,
@@ -20,17 +21,16 @@ import {
   UpdateBookingDto,
   UpsertExternalBookingNoteDto,
 } from './calendars.types';
-import { IcalSyncService } from '../ical-sync/ical-sync.service';
 import { SupabaseAdminGuard } from '../auth/supabase-admin.guard';
 import { ReservationActor } from '../reservations/reservations.types';
 
 type AuthenticatedRequest = { user: ReservationActor };
 
 @Controller('calendars')
+@UseGuards(SupabaseAdminGuard)
 export class CalendarsController {
   constructor(
     private readonly calendarsService: CalendarsService,
-    private readonly icalSyncService: IcalSyncService,
   ) {}
 
   @Get()
@@ -60,7 +60,7 @@ export class CalendarsController {
   @Post('sync')
   @UseGuards(SupabaseAdminGuard)
   async forceSync() {
-    return this.icalSyncService.forceSync();
+    throw new GoneException('Synchronizacja iCal została wycofana. Użyj POST /api/hostex/sync/reservations.');
   }
 
   @Delete('bookings/:id')

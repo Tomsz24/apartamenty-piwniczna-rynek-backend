@@ -57,10 +57,10 @@ automatycznym tworzeniu. Request ręcznej zmiany godzin służy wyłącznie do
 zatwierdzonego wcześniejszego przyjazdu lub późniejszego wyjazdu. Podfolder
 `AWARYJNE / TECHNICZNE` nie jest częścią zwykłego testu automatu.
 
-## Pierwszy bezpieczny test Hostex
+## Hostex — odczyt, mapowanie i podgląd importu
 
-Folder `06 Hostex — tylko odczyt` nie zawiera żadnych requestów zapisujących.
-Przed testem utwórz w Hostex token o zakresie `read-only`, zapisz go jako
+Folder `06 Hostex — odczyt i import` zawiera diagnostykę, mapowanie oraz osobny
+request zapisujący import do naszej bazy. Przed testem utwórz w Hostex token o zakresie `read-only`, zapisz go jako
 `HOSTEX_ACCESS_TOKEN` w `.env`, ustaw `HOSTEX_ENABLED=true` i zrestartuj backend.
 
 Następnie wykonaj kolejno:
@@ -68,6 +68,18 @@ Następnie wykonaj kolejno:
 1. `Status Hostex`,
 2. `Lista obiektów Hostex`,
 3. `Lista rezerwacji Hostex`.
+
+Po migracji `006_hostex_reservations.sql` uruchom `Mapowania apartamentów i properties`,
+aby sprawdzić zapisane przypisanie: `12761007` do „Widok na rynek” oraz `12761008`
+do „Widok na góry”. Pierwszy obiekt Hostex ma adres Rynek 3; odpowiada mu publiczna
+oferta Booking.com pod tym adresem. Request `Zapisz mapowanie property → apartament
+(WRITE DB)` służy do korekty przypisania, gdyby dane w panelu Hostex się zmieniły.
+
+Następnie uruchom `Podgląd importu rezerwacji Hostex`. Ten request niczego nie
+zapisuje i pokazuje, które rekordy zostaną dodane, zaktualizowane lub pominięte
+z powodu kolizji. Dopiero po sprawdzeniu podglądu można wywołać
+`WRITE DB — Importuj rezerwacje Hostex`; zapisuje on wyłącznie naszą bazę i nie
+tworzy ani nie zmienia kodów TTLock.
 
 Pusta lista jest poprawnym wynikiem dla konta bez obiektów i bez połączonego
 Booking.com. Skrypt drugiego requestu zapisze pierwszy znaleziony identyfikator

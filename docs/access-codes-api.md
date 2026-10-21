@@ -107,10 +107,11 @@ Po podłączeniu Hostex ten sam serwis zostanie wywołany asynchronicznie po
 zapisaniu potwierdzonej rezerwacji. Endpoint administracyjny pozostaje do
 kontrolowanego testu i ręcznego wznowienia procesu.
 
-Migracja 005 dodaje do każdego apartamentu domyślną politykę:
+Migracja 005 dodaje do każdego apartamentu politykę ważności. Migracja 010
+ustawia dla obu apartamentów godziny uzgodnione dla kodu:
 
 ```text
-access_code_check_in_time  = 15:00
+access_code_check_in_time  = 12:00
 access_code_check_out_time = 11:00
 access_code_time_zone      = Europe/Warsaw
 ```
@@ -118,6 +119,22 @@ access_code_time_zone      = Europe/Warsaw
 Wartości są konfigurowalne per apartament. Backend przelicza je z uwzględnieniem
 czasu letniego i zimowego. Odpowiedź zawiera `validitySource=apartment_default`
 oraz `timeZone`, dzięki czemu aplikacja rozróżnia standard od ręcznego wyjątku.
+
+## Automatyczne tworzenie i synchronizacja
+
+Backend sprawdza rezerwacje raz na minutę. Dla potwierdzonej rezerwacji
+przyjeżdżającej danego dnia tworzy jeden kod TTLock; po restarcie backendu
+spóźnione uruchomienie nadal wykona zadanie w dniu przyjazdu. Kod zaczyna działać
+od 12:00 w dniu przyjazdu i wygasa o 11:00 w dniu wyjazdu, według strefy
+apartamentu. Wysyłka wiadomości do gościa pozostaje ręczna.
+
+Zmiana dat potwierdzonej rezerwacji powoduje aktualizację ważności istniejącego
+kodu. Anulowanie rezerwacji powoduje usunięcie aktywnego kodu z TTLock. Operacje
+mają audyt i stan synchronizacji. Nieudane usunięcia aktywnych kodów są ponawiane
+w kolejnym cyklu. Nieudane utworzenie lub zmiana kodu pozostają w `sync_error`
+do ręcznej weryfikacji, żeby nie ryzykować duplikatu kodu w zamku. Automatyzacja
+jest domyślnie wyłączona; aby ją włączyć, ustaw
+`ACCESS_CODE_AUTOMATION_ENABLED=true`.
 
 ## Modyfikacja
 

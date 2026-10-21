@@ -36,6 +36,11 @@ export class TtlockController {
     return this.ttlockService.getStatus();
   }
 
+  @Get('connection')
+  checkConnection(): Promise<{ connected: boolean; checkedAt: string }> {
+    return this.ttlockService.checkConnection();
+  }
+
   @Get('locks')
   listLocks(): Promise<TtlockLockSummary[]> {
     return this.ttlockService.listLocks();

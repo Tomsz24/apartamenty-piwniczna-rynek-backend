@@ -3,9 +3,11 @@ import {
   BadGatewayException,
   ConflictException,
   Inject,
+  Logger,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { Pool, PoolClient } from 'pg';
 import { ConfigService } from '@nestjs/config';
 import { ReservationActor } from '../reservations/reservations.types';
@@ -56,9 +58,17 @@ type Candidate = {
   fingerprint: string;
 };
 
+const AUTOMATION_ACTOR: ReservationActor = {
+  id: 'system:access-code-automation',
+  email: 'access-code-automation',
+};
+
 @Injectable()
 export class AccessCodesService {
+  private readonly logger = new Logger(AccessCodesService.name);
   private readonly draftTtlMinutes: number;
+  private readonly automationEnabled: boolean;
+  private automaticLifecycleInProgress = false;
 
   constructor(
     @Inject('PG_POOL') private readonly pool: Pool,
@@ -69,6 +79,10 @@ export class AccessCodesService {
     const configured = Number(configService.get<string>('ACCESS_CODE_DRAFT_TTL_MINUTES'));
     this.draftTtlMinutes =
       Number.isInteger(configured) && configured >= 5 && configured <= 1440 ? configured : 30;
+    this.automationEnabled = this.readBoolean(
+      configService.get<string>('ACCESS_CODE_AUTOMATION_ENABLED'),
+      false,
+    );
   }
 
   getStatus(): AccessCodesStatusDto {
@@ -76,8 +90,139 @@ export class AccessCodesService {
     return {
       encryptionConfigured: this.cryptoService.isConfigured(),
       ttlockWritesEnabled: ttlock.writesEnabled,
+      automationEnabled: this.automationEnabled,
       writeMode: ttlock.writesEnabled ? 'controlled_test' : 'blocked',
     };
+  }
+
+  @Cron('*/1 * * * *')
+  async handleScheduledLifecycle(): Promise<void> {
+    if (
+      !this.automationEnabled ||
+      !this.cryptoService.isConfigured() ||
+      !this.ttlockService.getStatus().writesEnabled ||
+      this.automaticLifecycleInProgress
+    ) {
+      return;
+    }
+
+    this.automaticLifecycleInProgress = true;
+    try {
+      await this.reconcileCancelledReservations();
+      await this.reconcileChangedReservationDates();
+      await this.createDueReservationCodes();
+    } catch (error) {
+      this.logger.error(`Automatyczna obsługa kodów TTLock nie powiodła się: ${this.errorMessage(error)}`);
+    } finally {
+      this.automaticLifecycleInProgress = false;
+    }
+  }
+
+  private async reconcileCancelledReservations(): Promise<void> {
+    const result = await this.pool.query(
+      `SELECT code.id, code.version
+       FROM reservation_access_codes AS code
+       JOIN reservations AS reservation ON reservation.id = code.reservation_id
+       WHERE reservation.status = 'cancelled'
+         AND code.status IN ('active', 'sync_error')
+         AND code.provider_passcode_id IS NOT NULL
+       ORDER BY code.updated_at
+       LIMIT 25`,
+    );
+
+    for (const row of result.rows) {
+      try {
+        await this.revoke(row.id, Number(row.version), AUTOMATION_ACTOR);
+        this.logger.log(`Usunięto kod TTLock dla anulowanej rezerwacji (${row.id})`);
+      } catch (error) {
+        this.logger.error(`Nie udało się usunąć kodu TTLock (${row.id}): ${this.errorMessage(error)}`);
+      }
+    }
+  }
+
+  private async reconcileChangedReservationDates(): Promise<void> {
+    const result = await this.pool.query(
+      `SELECT code.id, code.version, code.valid_from, code.valid_until,
+              reservation.start_date, reservation.end_date,
+              apartment.access_code_check_in_time, apartment.access_code_check_out_time,
+              apartment.access_code_time_zone
+       FROM reservation_access_codes AS code
+       JOIN reservations AS reservation ON reservation.id = code.reservation_id
+       JOIN apartments AS apartment ON apartment.id = reservation.apartment_id
+       WHERE reservation.status = 'confirmed'
+         AND (NOW() AT TIME ZONE apartment.access_code_time_zone)::date <= reservation.start_date
+         AND code.status = 'active'
+       ORDER BY code.updated_at
+       LIMIT 25`,
+    );
+
+    for (const row of result.rows) {
+      const validity = buildAccessCodeValidity({
+        startDate: this.formatDate(row.start_date),
+        endDate: this.formatDate(row.end_date),
+        checkInTime: this.formatTime(row.access_code_check_in_time),
+        checkOutTime: this.formatTime(row.access_code_check_out_time),
+        timeZone: row.access_code_time_zone,
+      });
+      const oldStart = new Date(row.valid_from).getTime();
+      const oldEnd = new Date(row.valid_until).getTime();
+      if (
+        Math.abs(oldStart - validity.validFrom.getTime()) <= 1_000 &&
+        Math.abs(oldEnd - validity.validUntil.getTime()) <= 1_000
+      ) {
+        continue;
+      }
+
+      try {
+        await this.updateWithValiditySource(
+          row.id,
+          {
+            validFrom: validity.validFrom.toISOString(),
+            validUntil: validity.validUntil.toISOString(),
+            expectedVersion: Number(row.version),
+          },
+          AUTOMATION_ACTOR,
+          'apartment_default',
+        );
+        this.logger.log(`Zaktualizowano okres kodu TTLock po zmianie pobytu (${row.id})`);
+      } catch (error) {
+        this.logger.error(`Nie udało się zaktualizować kodu TTLock (${row.id}): ${this.errorMessage(error)}`);
+      }
+    }
+  }
+
+  private async createDueReservationCodes(): Promise<void> {
+    const result = await this.pool.query(
+      `SELECT reservation.id
+       FROM reservations AS reservation
+       JOIN apartments AS apartment ON apartment.id = reservation.apartment_id
+       WHERE reservation.status = 'confirmed'
+         AND reservation.start_date = (NOW() AT TIME ZONE apartment.access_code_time_zone)::date
+         AND EXISTS (
+           SELECT 1 FROM apartment_access_devices AS device
+           WHERE device.apartment_id = reservation.apartment_id
+             AND device.provider = 'ttlock'
+             AND device.scope = 'apartment'
+             AND device.active = true
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM reservation_access_codes AS code
+           WHERE code.reservation_id = reservation.id
+             AND code.status <> 'revoked'
+         )
+       ORDER BY reservation.start_date, reservation.id
+       LIMIT 25`,
+    );
+
+    for (const row of result.rows) {
+      try {
+        await this.ensureForReservation(row.id, AUTOMATION_ACTOR);
+        this.logger.log(`Utworzono zaplanowany kod TTLock (${row.id})`);
+      } catch (error) {
+        // Conflicts can occur if an admin creates a code at the same time.
+        this.logger.warn(`Nie udało się automatycznie utworzyć kodu (${row.id}): ${this.errorMessage(error)}`);
+      }
+    }
   }
 
   async list(query: ListAccessCodesQueryDto): Promise<AccessCodePageDto> {
@@ -632,6 +777,15 @@ export class AccessCodesService {
     dto: UpdateAccessCodeDto,
     actor: ReservationActor,
   ): Promise<AccessCodeDto> {
+    return this.updateWithValiditySource(id, dto, actor, 'manual_override');
+  }
+
+  private async updateWithValiditySource(
+    id: string,
+    dto: UpdateAccessCodeDto,
+    actor: ReservationActor,
+    source: 'manual_override' | 'apartment_default',
+  ): Promise<AccessCodeDto> {
     this.ttlockService.assertWritesAllowed();
     if (
       dto.validFrom === undefined &&
@@ -671,7 +825,7 @@ export class AccessCodesService {
       startAt,
       endAt,
       actor,
-      validitySource: validityChanged ? 'manual_override' : undefined,
+      validitySource: validityChanged ? source : undefined,
     });
     await this.recordEvent(id, 'update_requested', actor, {
       regenerateCode: false,
@@ -703,7 +857,7 @@ export class AccessCodesService {
       );
       await this.recordEvent(id, 'updated', actor, {
         regenerateCode: false,
-        validitySource: validityChanged ? 'manual_override' : undefined,
+        validitySource: validityChanged ? source : undefined,
       });
       return this.getById(id);
     } catch (error) {
@@ -723,9 +877,9 @@ export class AccessCodesService {
       throw new ConflictException('Kod został w międzyczasie zmieniony. Odśwież dane.');
     }
     if (row.status === 'revoked') return this.getById(id);
-    if (row.status !== 'active') {
+    if (row.status !== 'active' && row.status !== 'sync_error') {
       throw new ConflictException(
-        'Można usunąć tylko zsynchronizowany kod aktywny. Ten rekord wymaga sprawdzenia.',
+        'Można usunąć tylko zsynchronizowany albo wymagający ponowienia kod.',
       );
     }
     if (!row.provider_passcode_id) {
@@ -1229,7 +1383,7 @@ export class AccessCodesService {
     startAt: Date;
     endAt: Date;
     actor: ReservationActor;
-    validitySource?: 'manual_override';
+    validitySource?: 'manual_override' | 'apartment_default';
   }): Promise<number> {
     return this.withTransaction(async (client) => {
       await client.query(`SELECT id FROM apartment_access_devices WHERE id = $1 FOR UPDATE`, [
@@ -1270,10 +1424,11 @@ export class AccessCodesService {
               status = 'pending_update',
               metadata = CASE
                 WHEN $9::text IS NULL THEN metadata
-                ELSE metadata || jsonb_build_object(
+                WHEN $9::text = 'manual_override' THEN metadata || jsonb_build_object(
                   'validitySource', $9::text,
                   'manualOverrideAt', NOW()
                 )
+                ELSE (metadata - 'manualOverrideAt') || jsonb_build_object('validitySource', $9::text)
               END,
               updated_by = $8,
               updated_at = NOW(),
@@ -1481,6 +1636,11 @@ export class AccessCodesService {
   private normalizeName(value: string | null | undefined): string | null {
     const normalized = value?.trim();
     return normalized ? normalized.slice(0, 100) : null;
+  }
+
+  private readBoolean(value: string | undefined, fallback: boolean): boolean {
+    if (value === undefined || value.trim() === '') return fallback;
+    return value.trim().toLowerCase() === 'true';
   }
 
   private actorName(actor: ReservationActor): string {
