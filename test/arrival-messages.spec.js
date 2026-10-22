@@ -82,6 +82,11 @@ function createPool(stay = STAY) {
       }
       return { rowCount: 0, rows: [] };
     }
+    if (text.includes("WHERE status = 'sending' AND updated_at <")) {
+      if (state.delivery?.status !== 'sending' || !state.delivery.stale) return { rowCount: 0, rows: [] };
+      state.delivery.status = 'uncertain';
+      return { rowCount: 1, rows: [{ reservation_id: state.stay.id }] };
+    }
     if (text.includes('UPDATE arrival_message_deliveries')) {
       Object.assign(state.delivery, { status: params[2], image_sent: params[3], last_error: params[4] });
       return { rowCount: 1, rows: [] };
@@ -101,11 +106,11 @@ function createPool(stay = STAY) {
   return { state, query };
 }
 
-function createService({ pool = createPool(), code = { status: 'active', code: '0482', validFrom: '2026-10-23T10:00:00.000Z', validUntil: '2026-10-25T09:00:00.000Z' }, hostex = {}, enabled = true } = {}) {
+function createService({ pool = createPool(), code = { status: 'active', code: '0482', validFrom: '2026-10-23T10:00:00.000Z', validUntil: '2026-10-25T09:00:00.000Z' }, hostex = {}, enabled = true, listCodes } = {}) {
   const sent = [];
   const service = new ArrivalMessagesService(
     pool,
-    { list: async () => ({ items: code ? [code] : [] }) },
+    { list: listCodes ?? (async () => ({ items: code ? [code] : [] })) },
     {
       sendMessage: hostex.sendMessage ?? (async (conversationId, message) => { sent.push({ conversationId, message }); return {}; }),
       sendImage: hostex.sendImage ?? (async (conversationId, jpeg) => { sent.push({ conversationId, image: jpeg.length }); return {}; }),
@@ -224,4 +229,31 @@ test('arrival delivery migration is repeatable, one row per stay, hidden from Da
   } finally {
     await db.close();
   }
+});
+
+test('a failure while preparing the text leaves the delivery retryable, not stuck in sending', async (t) => {
+  stubMapFetch(t);
+  let broken = true;
+  const { service, pool, sent } = createService({
+    listCodes: async () => {
+      if (broken) throw new Error('connection terminated');
+      return { items: [{ status: 'active', code: '0482', validFrom: '2026-10-23T10:00:00.000Z', validUntil: '2026-10-25T09:00:00.000Z' }] };
+    },
+  });
+  await service.sendViaHostex('res-1', 'automation');
+  assert.equal(pool.state.delivery.status, 'failed');
+  assert.match(pool.state.delivery.last_error, /connection terminated/);
+  broken = false;
+  await service.sendViaHostex('res-1', 'admin:owner');
+  assert.equal(pool.state.delivery.status, 'sent');
+  assert.equal(sent.filter((item) => item.message).length, 1);
+});
+
+test('the schedule turns an interrupted send into "uncertain" instead of leaving it stuck', async () => {
+  const pool = createPool();
+  pool.state.delivery = { status: 'sending', attempts: 1, image_sent: false, last_error: null, stale: true };
+  const wrapped = { query: async (text, params) => (text.includes('SELECT reservation.id') ? { rows: [] } : pool.query(text, params)) };
+  const { service } = createService({ pool: wrapped });
+  await service.handleScheduledSend();
+  assert.equal(pool.state.delivery.status, 'uncertain');
 });

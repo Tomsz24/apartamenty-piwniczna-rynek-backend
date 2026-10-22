@@ -115,12 +115,13 @@ test('runs automatic access-code lifecycle only when explicitly enabled and TTLo
     cryptoService,
     new ConfigService({ ACCESS_CODE_AUTOMATION_ENABLED: 'true' }),
   );
+  service.recoverStuckCodes = async () => events.push('recovered');
   service.reconcileCancelledReservations = async () => events.push('cancelled');
   service.reconcileChangedReservationDates = async () => events.push('updated');
   service.createDueReservationCodes = async () => events.push('created');
 
   await service.handleScheduledLifecycle();
-  assert.deepEqual(events, ['cancelled', 'updated', 'created']);
+  assert.deepEqual(events, ['recovered', 'cancelled', 'updated', 'created']);
 
   const disabledService = new AccessCodesService(
     { query: async () => ({ rows: [] }) },
@@ -128,6 +129,7 @@ test('runs automatic access-code lifecycle only when explicitly enabled and TTLo
     cryptoService,
     new ConfigService({ ACCESS_CODE_AUTOMATION_ENABLED: 'false' }),
   );
+  disabledService.recoverStuckCodes = async () => events.push('unexpected');
   disabledService.reconcileCancelledReservations = async () => events.push('unexpected');
   await disabledService.handleScheduledLifecycle();
   assert.equal(events.includes('unexpected'), false);
@@ -551,4 +553,87 @@ test('date reconciliation follows extensions mid-stay but leaves manual windows 
     { id: 'default', validFrom: '2026-10-22T10:00:00.000Z', validUntil: '2026-10-26T10:00:00.000Z', expectedVersion: 3, source: 'apartment_default' },
     { id: 'manual-moved', validFrom: '2026-10-22T10:00:00.000Z', validUntil: '2026-10-23T09:00:00.000Z', expectedVersion: 2, source: 'apartment_default' },
   ]);
+});
+
+function recoveryHarness(row, ttlockOverrides = {}) {
+  const key = Buffer.alloc(32, 31).toString('base64');
+  const cryptoService = new AccessCodeCryptoService(
+    new ConfigService({ ACCESS_CODE_ENCRYPTION_KEY: key }),
+  );
+  const fullRow = {
+    id: 'code-1',
+    version: 4,
+    status: 'sync_error',
+    provider_device_id: '77',
+    provider_passcode_id: null,
+    reservation_status: 'confirmed',
+    code_ciphertext: cryptoService.encrypt('4821'),
+    code_name: 'Anna',
+    valid_from: new Date(Date.now() + 3600_000).toISOString(),
+    valid_until: new Date(Date.now() + 3 * 86400_000).toISOString(),
+    updated_at: new Date().toISOString(),
+    ...row,
+  };
+  const statuses = [];
+  const calls = [];
+  const pool = {
+    query: async (text, params = []) => {
+      if (/JOIN apartment_access_devices AS device ON device\.id = code\.access_device_id/.test(text)) {
+        return { rows: [fullRow] };
+      }
+      if (/SET status = \$3, version = version \+ 1/.test(text)) {
+        statuses.push(params[2]);
+        return { rows: [{ version: fullRow.version + 1 }] };
+      }
+      const status = text.match(/SET status = '(\w+)'/);
+      if (status) statuses.push(status[1]);
+      return { rows: [] };
+    },
+  };
+  const ttlock = {
+    getStatus: () => ({ writesEnabled: true }),
+    assertWritesAllowed: () => {},
+    findPasscode: async () => null,
+    isPasscodeAvailable: async () => true,
+    isPasscodeConfigured: async () => true,
+    createPasscode: async () => {
+      calls.push('create');
+      return { keyboardPwdId: 555 };
+    },
+    changePasscode: async () => calls.push('change'),
+    deletePasscode: async () => calls.push('delete'),
+    ...ttlockOverrides,
+  };
+  const service = new AccessCodesService(pool, ttlock, cryptoService, new ConfigService({}));
+  service.getById = async (id) => ({ id });
+  return { service, statuses, calls };
+}
+
+const recoveryActor = { id: 'admin', email: 'admin@example.com' };
+
+test('recovery adopts a code that reached the lock even though the create call failed', async () => {
+  const { service, statuses, calls } = recoveryHarness({}, { findPasscode: async () => 901 });
+  await service.reconcile('code-1', recoveryActor);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(statuses, ['pending_create', 'active']);
+});
+
+test('recovery recreates a code that never reached the lock', async () => {
+  const { service, statuses, calls } = recoveryHarness();
+  await service.reconcile('code-1', recoveryActor);
+  assert.deepEqual(calls, ['create']);
+  assert.deepEqual(statuses, ['pending_create', 'active']);
+});
+
+test('deleting a code without a TTLock id checks the lock instead of blocking', async () => {
+  const { service, statuses, calls } = recoveryHarness();
+  await service.revoke('code-1', 4, recoveryActor);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(statuses, ['pending_delete', 'revoked']);
+});
+
+test('recovery leaves a code that is still being written alone', async () => {
+  const { service, calls } = recoveryHarness({ status: 'pending_create' });
+  await assert.rejects(service.reconcile('code-1', recoveryActor), /w toku/);
+  assert.deepEqual(calls, []);
 });

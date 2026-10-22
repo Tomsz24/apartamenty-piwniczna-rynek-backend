@@ -52,6 +52,8 @@ type StayContext = {
 
 // Definite failures (e.g. no code yet) are retried by the next runs until 13:30.
 const MAX_ATTEMPTS = 8;
+// A delivery still "sending" after this long was interrupted (e.g. a restart mid-send).
+const STALE_SENDING_MINUTES = 15;
 
 /**
  * Arrival message with the door code and the map. Channel stays get it
@@ -113,6 +115,7 @@ export class ArrivalMessagesService {
     if (!this.autoSendEnabled || this.busy) return;
     this.busy = true;
     try {
+      await this.releaseStaleSending();
       const due = await this.pool.query(
         `SELECT reservation.id
          FROM reservations AS reservation
@@ -158,6 +161,7 @@ export class ArrivalMessagesService {
       throw new ConflictException('Wiadomość jest właśnie wysyłana albo wymaga sprawdzenia czatu');
     }
 
+    // A render error turns into missingReason, so the delivery ends as retryable "failed".
     const { text, missingReason } = await this.render(stay);
     if (!text) {
       await this.finish(stay, 'failed', false, missingReason);
@@ -210,6 +214,14 @@ export class ArrivalMessagesService {
   }
 
   private async render(stay: StayContext): Promise<{ text: string | null; missingReason: string | null }> {
+    try {
+      return await this.renderOrThrow(stay);
+    } catch (error) {
+      return { text: null, missingReason: `Nie udało się przygotować treści: ${this.safe(error)}` };
+    }
+  }
+
+  private async renderOrThrow(stay: StayContext): Promise<{ text: string | null; missingReason: string | null }> {
     if (!stay.templateBody) return { text: null, missingReason: 'Apartament nie ma szablonu wiadomości przyjazdowej' };
     const page = await this.accessCodes.list({ reservationId: stay.id, limit: 10 } as never);
     const code = page.items.find((item) => item.status === 'active');
@@ -224,6 +236,24 @@ export class ArrivalMessagesService {
       return { text: null, missingReason: 'Szablon zawiera nieznane pola do uzupełnienia' };
     }
     return { text, missingReason: null };
+  }
+
+  /**
+   * A crash between claiming and finishing leaves "sending" forever. We cannot tell whether
+   * Hostex got the message, so hand it to the owner as "uncertain" rather than resend.
+   */
+  private async releaseStaleSending(): Promise<void> {
+    const stale = await this.pool.query(
+      `UPDATE arrival_message_deliveries
+       SET status = 'uncertain', updated_at = NOW(),
+           last_error = 'Wysyłka została przerwana — sprawdź w czacie, czy wiadomość doszła.'
+       WHERE status = 'sending' AND updated_at < NOW() - make_interval(mins => $1)
+       RETURNING reservation_id`,
+      [STALE_SENDING_MINUTES],
+    );
+    for (const row of stale.rows) {
+      this.logger.warn(`Przerwana wysyłka wiadomości przyjazdowej (${row.reservation_id}) — wymaga sprawdzenia`);
+    }
   }
 
   private async claim(stay: StayContext, triggeredBy: string): Promise<boolean> {

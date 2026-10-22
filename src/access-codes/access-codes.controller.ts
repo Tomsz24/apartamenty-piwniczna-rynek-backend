@@ -156,6 +156,15 @@ export class AccessCodesController {
     return this.accessCodesService.revoke(id, query.expectedVersion, request.user);
   }
 
+  /** Checks the lock and finishes a create/update/delete that failed or was interrupted. */
+  @Post(':id/reconcile')
+  reconcile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<AccessCodeDto> {
+    return this.accessCodesService.reconcile(id, request.user);
+  }
+
   @Get(':id/usage')
   getUsage(@Param('id', ParseUUIDPipe) id: string): Promise<AccessCodeUsageDto> {
     return this.accessCodesService.getUsage(id);
