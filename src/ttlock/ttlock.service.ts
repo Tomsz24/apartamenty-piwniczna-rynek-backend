@@ -250,6 +250,37 @@ export class TtlockService {
     });
   }
 
+  /** Looks up a passcode on the lock by its value and validity window; used to recover after an unclear write. */
+  async findPasscode(params: {
+    lockId: number;
+    passcode: string;
+    startAt: Date;
+    endAt: Date;
+  }): Promise<number | null> {
+    this.assertFourDigitPasscode(params.passcode);
+    this.assertTimestampRange(params.startAt, params.endAt);
+    const records = await this.listAllPages('/v3/lock/listKeyboardPwd', {
+      lockId: params.lockId.toString(),
+    });
+    for (const record of records) {
+      const keyboardPwdId = this.asPositiveNumber(record.keyboardPwdId);
+      const passcode = this.asNonEmptyString(record.keyboardPwd);
+      const startAt = this.asPositiveNumber(record.startDate);
+      const endAt = this.asPositiveNumber(record.endDate);
+      if (
+        keyboardPwdId !== null &&
+        passcode === params.passcode &&
+        startAt !== null &&
+        endAt !== null &&
+        Math.abs(startAt - params.startAt.getTime()) <= 1_000 &&
+        Math.abs(endAt - params.endAt.getTime()) <= 1_000
+      ) {
+        return keyboardPwdId;
+      }
+    }
+    return null;
+  }
+
   async createPasscode(
     params: TtlockCreatePasscodeParams,
   ): Promise<TtlockPasscodeWriteResult> {

@@ -60,6 +60,11 @@ type Candidate = {
   fingerprint: string;
 };
 
+// Pending writes older than this are treated as interrupted (e.g. process restart mid-call).
+const STALE_PENDING_MINUTES = 10;
+// Automatic recovery gives up after this many failures per day; the admin can still retry by hand.
+const MAX_AUTOMATIC_RECOVERIES_PER_DAY = 6;
+
 const AUTOMATION_ACTOR: ReservationActor = {
   id: 'system:access-code-automation',
   email: 'access-code-automation',
@@ -110,6 +115,7 @@ export class AccessCodesService {
 
     this.automaticLifecycleInProgress = true;
     try {
+      await this.recoverStuckCodes();
       await this.reconcileCancelledReservations();
       await this.reconcileChangedReservationDates();
       await this.createDueReservationCodes();
@@ -126,8 +132,7 @@ export class AccessCodesService {
        FROM reservation_access_codes AS code
        JOIN reservations AS reservation ON reservation.id = code.reservation_id
        WHERE reservation.status = 'cancelled'
-         AND code.status IN ('active', 'sync_error')
-         AND code.provider_passcode_id IS NOT NULL
+         AND code.status = 'active'
        ORDER BY code.updated_at
        LIMIT 25`,
     );
@@ -138,6 +143,39 @@ export class AccessCodesService {
         this.logger.log(`Usunięto kod TTLock dla anulowanej rezerwacji (${row.id})`);
       } catch (error) {
         this.logger.error(`Nie udało się usunąć kodu TTLock (${row.id}): ${this.errorMessage(error)}`);
+      }
+    }
+  }
+
+  /** Retries codes left in sync_error or interrupted mid-write, checking the lock first. */
+  private async recoverStuckCodes(): Promise<void> {
+    const result = await this.pool.query(
+      `SELECT code.id
+       FROM reservation_access_codes AS code
+       JOIN reservations AS reservation ON reservation.id = code.reservation_id
+       WHERE (
+           (code.status = 'sync_error' AND code.updated_at < NOW() - INTERVAL '5 minutes')
+           OR (code.status IN ('pending_create', 'pending_update', 'pending_delete')
+               AND code.updated_at < NOW() - make_interval(mins => $1))
+         )
+         AND (code.valid_until > NOW() OR reservation.status = 'cancelled')
+         AND (
+           SELECT COUNT(*) FROM access_code_audit_events AS event
+           WHERE event.access_code_id = code.id
+             AND event.event_type IN ('create_failed', 'update_failed', 'delete_failed')
+             AND event.created_at > NOW() - INTERVAL '1 day'
+         ) < $2
+       ORDER BY code.updated_at
+       LIMIT 10`,
+      [STALE_PENDING_MINUTES, MAX_AUTOMATIC_RECOVERIES_PER_DAY],
+    );
+
+    for (const row of result.rows) {
+      try {
+        await this.reconcile(row.id, AUTOMATION_ACTOR);
+        this.logger.log(`Odzyskano kod TTLock (${row.id})`);
+      } catch (error) {
+        this.logger.warn(`Nie udało się odzyskać kodu TTLock (${row.id}): ${this.errorMessage(error)}`);
       }
     }
   }
@@ -446,6 +484,9 @@ export class AccessCodesService {
     );
     if (current.rows.length > 0) {
       if (current.rows[0].status === 'active') return this.getById(current.rows[0].id);
+      if (current.rows[0].status === 'sync_error') {
+        return this.reconcile(current.rows[0].id, actor, 'ensure');
+      }
       throw new ConflictException(
         'Rezerwacja ma kod w trakcie synchronizacji albo wymagający sprawdzenia',
       );
@@ -894,7 +935,8 @@ export class AccessCodesService {
       );
     }
     if (!row.provider_passcode_id) {
-      throw new ConflictException('Kod nie ma identyfikatora TTLock i wymaga sprawdzenia');
+      // A failed create may or may not have reached the lock: let recovery look it up.
+      return this.reconcile(id, actor, 'delete');
     }
 
     const pending = await this.pool.query(
@@ -941,6 +983,151 @@ export class AccessCodesService {
       await this.markSyncError(id, error, actor, 'delete_failed');
       throw error;
     }
+  }
+
+  /**
+   * Brings a code that failed or was interrupted mid-sync back in line with TTLock.
+   * The database row already holds the intended code and window, so we look at what
+   * the lock really has and then finish the create/update, or the delete.
+   */
+  async reconcile(
+    id: string,
+    actor: ReservationActor,
+    intent?: 'ensure' | 'delete',
+  ): Promise<AccessCodeDto> {
+    this.ttlockService.assertWritesAllowed();
+    const row = await this.loadMutableRow(id);
+    if (row.status === 'active' && intent !== 'delete') return this.getById(id);
+    if (row.status === 'revoked') return this.getById(id);
+    const stalePending =
+      row.status.startsWith('pending_') &&
+      new Date(row.updated_at).getTime() < Date.now() - STALE_PENDING_MINUTES * 60_000;
+    if (row.status !== 'sync_error' && row.status !== 'active' && !stalePending) {
+      throw new ConflictException('Operacja na tym kodzie jest w toku. Spróbuj ponownie za kilka minut.');
+    }
+
+    const deleting =
+      intent === 'delete' ||
+      row.status === 'pending_delete' ||
+      row.reservation_status === 'cancelled' ||
+      new Date(row.valid_until).getTime() <= Date.now() ||
+      (intent === undefined && (await this.lastFailedEvent(id)) === 'delete_failed');
+    const lockId = Number(row.provider_device_id);
+    const passcode = this.cryptoService.decrypt(row.code_ciphertext);
+    const startAt = new Date(row.valid_from);
+    const endAt = new Date(row.valid_until);
+    let providerId = row.provider_passcode_id ? Number(row.provider_passcode_id) : null;
+
+    const claimed = await this.pool.query(
+      `
+        UPDATE reservation_access_codes
+        SET status = $3, version = version + 1, updated_at = NOW(), updated_by = $4
+        WHERE id = $1 AND version = $2
+        RETURNING version
+      `,
+      [
+        id,
+        row.version,
+        deleting ? 'pending_delete' : providerId ? 'pending_update' : 'pending_create',
+        this.actorName(actor),
+      ],
+    );
+    if (claimed.rows.length === 0) {
+      throw new ConflictException('Kod został w międzyczasie zmieniony. Odśwież dane.');
+    }
+
+    const failedEvent = deleting ? 'delete_failed' : providerId ? 'update_failed' : 'create_failed';
+    try {
+      providerId ??= await this.ttlockService.findPasscode({ lockId, passcode, startAt, endAt });
+
+      if (deleting) {
+        if (providerId) await this.ttlockService.deletePasscode(lockId, providerId);
+        await this.pool.query(
+          `
+            UPDATE reservation_access_codes
+            SET status = 'revoked', revoked_at = NOW(), revoked_by = $2,
+                provider_synced_at = NOW(), last_error = NULL, updated_at = NOW()
+            WHERE id = $1
+          `,
+          [id, this.actorName(actor)],
+        );
+        await this.recordEvent(id, 'revoked', actor, {
+          recovered: true,
+          foundOnLock: providerId !== null,
+        });
+        return this.getById(id);
+      }
+
+      const existed = providerId !== null;
+      if (!providerId) {
+        if (!(await this.ttlockService.isPasscodeAvailable({ lockId, passcode, startAt, endAt }))) {
+          throw new ConflictException(
+            'Ten PIN jest już zajęty na zamku w tym terminie. Usuń kod i utwórz nowy.',
+          );
+        }
+        providerId = (
+          await this.ttlockService.createPasscode({
+            lockId,
+            passcode,
+            name: row.code_name,
+            startAt,
+            endAt,
+          })
+        ).keyboardPwdId;
+      } else if (
+        !(await this.ttlockService.isPasscodeConfigured({
+          lockId,
+          keyboardPwdId: providerId,
+          passcode,
+          startAt,
+          endAt,
+        }))
+      ) {
+        await this.ttlockService.changePasscode({
+          lockId,
+          keyboardPwdId: providerId,
+          name: row.code_name,
+          startAt,
+          endAt,
+        });
+      }
+      await this.pool.query(
+        `UPDATE reservation_access_codes SET provider_passcode_id = $2, updated_at = NOW() WHERE id = $1`,
+        [id, providerId],
+      );
+      await this.confirmProviderPasscode({ lockId, keyboardPwdId: providerId, passcode, startAt, endAt });
+      await this.pool.query(
+        `
+          UPDATE reservation_access_codes
+          SET status = 'active', provider_synced_at = NOW(), last_error = NULL, updated_at = NOW()
+          WHERE id = $1
+        `,
+        [id],
+      );
+      await this.recordEvent(id, row.provider_passcode_id ? 'updated' : 'created', actor, {
+        recovered: true,
+        providerPasscodeId: providerId,
+        foundOnLock: existed,
+      });
+      return this.getById(id);
+    } catch (error) {
+      await this.markSyncError(id, error, actor, failedEvent);
+      throw error;
+    }
+  }
+
+  private async lastFailedEvent(id: string): Promise<string | null> {
+    const result = await this.pool.query(
+      `
+        SELECT event_type FROM access_code_audit_events
+        WHERE access_code_id = $1
+          AND event_type IN ('create_failed', 'update_failed', 'delete_failed')
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [id],
+    );
+    return result.rows[0]?.event_type ?? null;
   }
 
   async getUsage(id: string): Promise<AccessCodeUsageDto> {
@@ -1482,6 +1669,7 @@ export class AccessCodesService {
         SELECT
           code.*,
           device.provider_device_id,
+          reservation.status AS reservation_status,
           reservation.start_date AS stay_start_date,
           reservation.end_date AS stay_end_date
         FROM reservation_access_codes AS code
