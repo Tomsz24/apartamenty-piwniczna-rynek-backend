@@ -26,7 +26,7 @@ test('disabled sender never touches database', async () => {
   await service.dispatch(); assert.equal(queries.length, 0);
 });
 test('enabled sender rejects missing and invalid configuration', () => {
-  for (const values of [{ RESEND_API_KEY: '' }, { RESERVATION_EMAIL_START_AT: 'bad' }, { RESERVATION_EMAIL_TO: 'a@example.com,b@example.com' }]) {
+  for (const values of [{ RESEND_API_KEY: '' }, { RESERVATION_EMAIL_START_AT: 'bad' }, { RESERVATION_EMAIL_TO: 'a@example.com, not-an-email' }, { RESERVATION_EMAIL_TO: ' , ' }]) {
     assert.throws(() => harness(job(), values).service.onModuleInit());
   }
   harness(job()).service.onModuleInit();
@@ -70,4 +70,58 @@ test('network timeout retries and expired idempotency window stops', async t => 
   h = harness({...job(), first_attempt_at: new Date(Date.now() - 24*3600000).toISOString()});
   await h.service.dispatch();
   assert.ok(h.queries.some(q => q.sql.includes('Idempotency window expired')));
+});
+
+test('omits pets and zero head counts, shows money with currency and Polish payment status', () => {
+  // The cancellation email from the first production test (22.10.2026).
+  const snapshot = {
+    id: '9b9b3340-7f21-465c-9b6b-5552315d3993', apartment_name: 'Apartament - Widok na rynek',
+    start_date: '2026-10-22', end_date: '2026-10-23', guest_name: 'Tomasz Wojciechowski',
+    guest_count: 2, adults: 2, children: 0, infants: 0, pets: 0, child_ages: [],
+    guest_phone: '512 251 253', status: 'cancelled', total_rate_amount: 448, amount_received: 0,
+    currency: 'PLN', payment_status: 'unreceived',
+  };
+  const { text } = renderReservationEmail({ event_type: 'reservation_cancelled', snapshot, previous_snapshot: null });
+  // Intl keeps the amount and "zł" together with a non-breaking space.
+  const plain = (value) => value.replace(/[\u00a0\u202f]/g, ' ');
+  const lines = plain(text).split('\n');
+  assert.ok(lines.includes('Liczba gości: 2'));
+  assert.ok(lines.includes('Dorośli: 2'));
+  for (const hidden of ['Dzieci', 'Niemowlęta', 'Zwierzęta', 'Wiek dzieci', 'Waluta']) {
+    assert.equal(lines.some((line) => line.startsWith(`${hidden}:`)), false, hidden);
+  }
+  assert.ok(lines.includes('Wartość rezerwacji: 448,00 zł'));
+  assert.ok(lines.includes('Otrzymano: 0,00 zł'));
+  assert.ok(lines.includes('Status płatności: Nieopłacona'));
+  assert.ok(lines.includes('Status: Anulowana'));
+
+  // A change down to zero is still reported in the diff; pets never are.
+  const modified = plain(renderReservationEmail({
+    event_type: 'reservation_modified',
+    snapshot: { ...snapshot, status: 'confirmed', children: 0, pets: 1, total_rate_amount: 500 },
+    previous_snapshot: { ...snapshot, status: 'confirmed', children: 1, pets: 0 },
+  }).text);
+  assert.ok(modified.includes('Dzieci: 1 → 0'));
+  assert.ok(modified.includes('Wartość rezerwacji: 448,00 zł → 500,00 zł'));
+  assert.equal(modified.includes('Zwierzęta'), false);
+});
+
+test('sends a separate email to every address on the comma-separated recipient list', async (t) => {
+  const { recipientList } = require('../dist/notifications/reservation-email.service');
+  assert.deepEqual(recipientList(' owner@example.com, family@example.com ,owner@example.com '), ['owner@example.com', 'family@example.com']);
+  const original = global.fetch;
+  let body; let url; let headers;
+  global.fetch = async (target, init) => {
+    url = target; headers = init.headers; body = JSON.parse(init.body);
+    return { ok: true, json: async () => ({ data: [{ id: 'resend-1' }, { id: 'resend-2' }] }) };
+  };
+  t.after(() => { global.fetch = original; });
+  const { service } = harness(job(), { RESERVATION_EMAIL_TO: 'owner@example.com, family@example.com' });
+  service.onModuleInit();
+  await service.dispatch();
+  assert.equal(url, 'https://api.resend.com/emails/batch');
+  assert.equal(headers['Idempotency-Key'], 'reservation/event-1');
+  assert.deepEqual(body.map((email) => email.to), [['owner@example.com'], ['family@example.com']]);
+  assert.equal(body[0].subject, body[1].subject);
+  assert.equal(body[0].html, body[1].html);
 });

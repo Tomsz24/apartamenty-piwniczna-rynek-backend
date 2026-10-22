@@ -14,6 +14,8 @@ export type NotificationInboxItem = {
   apartmentId: string | null;
   apartmentName: string | null;
   reservationId: string | null;
+  /** Hostex conversation for `new_message` events, used by the app to open the chat. */
+  conversationId: string | null;
   guestName: string | null;
   createdAt: string;
   readAt: string | null;
@@ -29,6 +31,7 @@ export class NotificationsService {
         `SELECT e.id, e.event_type AS "eventType", e.priority, e.status,
                 e.title, e.body, e.apartment_id AS "apartmentId",
                 a.name AS "apartmentName", e.reservation_id AS "reservationId",
+                e.payload->>'conversationId' AS "conversationId",
                 r.guest_name AS "guestName", e.created_at AS "createdAt",
                 reads.read_at AS "readAt"
          FROM notification_events e

@@ -23,6 +23,9 @@ projekcie Supabase.
 - `PUT /api/notifications/preferences` zapisuje komplet preferencji.
 - `GET /api/notifications/inbox` zwraca do 100 ostatnich zdarzeń i liczbę
   nieprzeczytanych.
+  Każdy element ma `reservationId` i — dla nowych wiadomości — `conversationId`,
+  dzięki którym aplikacja otwiera właściwą rezerwację albo rozmowę (te same pola
+  są w payloadzie push).
 - `PUT /api/notifications/inbox/:id/read` oznacza jedno zdarzenie jako
   przeczytane.
 - `PUT /api/notifications/inbox/read-all` oznacza widoczne zdarzenia jako
