@@ -128,8 +128,13 @@ spóźnione uruchomienie nadal wykona zadanie w dniu przyjazdu. Kod zaczyna dzia
 od 12:00 w dniu przyjazdu i wygasa o 11:00 w dniu wyjazdu, według strefy
 apartamentu. Wysyłka wiadomości do gościa pozostaje ręczna.
 
-Zmiana dat potwierdzonej rezerwacji powoduje aktualizację ważności istniejącego
-kodu. Anulowanie rezerwacji powoduje usunięcie aktywnego kodu z TTLock. Operacje
+Zmiana dat potwierdzonej rezerwacji (przedłużenie lub skrócenie, także w trakcie
+pobytu, dopóki kod jest ważny) powoduje aktualizację ważności istniejącego kodu.
+Ręcznie ustawiony okres (`manual_override`) jest zachowywany, dopóki daty pobytu,
+dla których go ustawiono, się nie zmienią; po zmianie dat kod wraca do okresu
+domyślnego dla nowych dat. Ręczne utworzenie kodu przed dniem przyjazdu
+(`PUT /api/access-codes/by-reservation/:id`) przypisuje go do rezerwacji, a
+automatyzacja nie tworzy wtedy drugiego kodu. Anulowanie rezerwacji powoduje usunięcie aktywnego kodu z TTLock. Operacje
 mają audyt i stan synchronizacji. Nieudane usunięcia aktywnych kodów są ponawiane
 w kolejnym cyklu. Nieudane utworzenie lub zmiana kodu pozostają w `sync_error`
 do ręcznej weryfikacji, żeby nie ryzykować duplikatu kodu w zamku. Automatyzacja
@@ -149,9 +154,9 @@ Content-Type: application/json
 ```
 
 Ten endpoint przyjmuje tylko `validFrom`, `validUntil` i `expectedVersion`.
-Zmienia okres ważności bez zmiany cyfr ani nazwy kodu. Można zmienić
-wyłącznie godziny w dniu przyjazdu i wyjazdu zapisanym w rezerwacji; próba
-przesunięcia kodu na inny dzień jest odrzucana. Po zmianie backend ponownie
+Zmienia okres ważności bez zmiany cyfr ani nazwy kodu. Można zmienić dni i
+godziny, ale kod musi obejmować pobyt i mieścić się między dniem przed przyjazdem
+a dniem po wyjeździe (chroni przed pomyłką w dacie). Po zmianie backend ponownie
 potwierdza cyfry i okres na liście kodów TTLock. Odpowiedź otrzymuje
 `validitySource=manual_override`. `expectedVersion` chroni przed nadpisaniem
 równoległej zmiany na innym urządzeniu.

@@ -18,6 +18,8 @@ import {
   decodeAccessCodeCursor,
   encodeAccessCodeCursor,
   formatDateInTimeZone,
+  manualAccessCodeWindowError,
+  shouldApplyDefaultValidity,
   generateFourDigitCode,
 } from './access-codes.domain';
 import {
@@ -142,7 +144,7 @@ export class AccessCodesService {
 
   private async reconcileChangedReservationDates(): Promise<void> {
     const result = await this.pool.query(
-      `SELECT code.id, code.version, code.valid_from, code.valid_until,
+      `SELECT code.id, code.version, code.valid_from, code.valid_until, code.metadata,
               reservation.start_date, reservation.end_date,
               apartment.access_code_check_in_time, apartment.access_code_check_out_time,
               apartment.access_code_time_zone
@@ -150,16 +152,23 @@ export class AccessCodesService {
        JOIN reservations AS reservation ON reservation.id = code.reservation_id
        JOIN apartments AS apartment ON apartment.id = reservation.apartment_id
        WHERE reservation.status = 'confirmed'
-         AND (NOW() AT TIME ZONE apartment.access_code_time_zone)::date <= reservation.start_date
+         AND code.valid_until > NOW()
          AND code.status = 'active'
        ORDER BY code.updated_at
        LIMIT 25`,
     );
 
     for (const row of result.rows) {
+      const stayStartDate = this.formatDate(row.start_date);
+      const stayEndDate = this.formatDate(row.end_date);
+      // A manual window set for the current stay dates is left alone; extending or
+      // shortening the stay (also mid-stay) moves the code to the new default window.
+      if (!shouldApplyDefaultValidity({ metadata: row.metadata, stayStartDate, stayEndDate })) {
+        continue;
+      }
       const validity = buildAccessCodeValidity({
-        startDate: this.formatDate(row.start_date),
-        endDate: this.formatDate(row.end_date),
+        startDate: stayStartDate,
+        endDate: stayEndDate,
         checkInTime: this.formatTime(row.access_code_check_in_time),
         checkOutTime: this.formatTime(row.access_code_check_out_time),
         timeZone: row.access_code_time_zone,
@@ -826,6 +835,8 @@ export class AccessCodesService {
       endAt,
       actor,
       validitySource: validityChanged ? source : undefined,
+      stayStartDate: this.formatDate(row.stay_start_date),
+      stayEndDate: this.formatDate(row.stay_end_date),
     });
     await this.recordEvent(id, 'update_requested', actor, {
       regenerateCode: false,
@@ -1098,6 +1109,8 @@ export class AccessCodesService {
       endAt,
       actor,
       validitySource: 'manual_override',
+      stayStartDate: this.formatDate(current.stay_start_date),
+      stayEndDate: this.formatDate(current.stay_end_date),
     });
     await this.pool.query(
       `UPDATE access_code_drafts SET applied_access_code_id = $2, updated_at = NOW() WHERE id = $1`,
@@ -1384,6 +1397,8 @@ export class AccessCodesService {
     endAt: Date;
     actor: ReservationActor;
     validitySource?: 'manual_override' | 'apartment_default';
+    stayStartDate?: string;
+    stayEndDate?: string;
   }): Promise<number> {
     return this.withTransaction(async (client) => {
       await client.query(`SELECT id FROM apartment_access_devices WHERE id = $1 FOR UPDATE`, [
@@ -1426,9 +1441,12 @@ export class AccessCodesService {
                 WHEN $9::text IS NULL THEN metadata
                 WHEN $9::text = 'manual_override' THEN metadata || jsonb_build_object(
                   'validitySource', $9::text,
-                  'manualOverrideAt', NOW()
+                  'manualOverrideAt', NOW(),
+                  'overrideStayStartDate', $10::text,
+                  'overrideStayEndDate', $11::text
                 )
-                ELSE (metadata - 'manualOverrideAt') || jsonb_build_object('validitySource', $9::text)
+                ELSE (metadata - 'manualOverrideAt' - 'overrideStayStartDate' - 'overrideStayEndDate')
+                  || jsonb_build_object('validitySource', $9::text)
               END,
               updated_by = $8,
               updated_at = NOW(),
@@ -1447,6 +1465,8 @@ export class AccessCodesService {
           params.endAt.toISOString(),
           this.actorName(params.actor),
           params.validitySource ?? null,
+          params.stayStartDate ?? null,
+          params.stayEndDate ?? null,
         ],
       );
       if (pending.rows.length === 0) {
@@ -1480,18 +1500,14 @@ export class AccessCodesService {
   private assertManualWindowMatchesStay(row: any, startAt: Date, endAt: Date): void {
     const metadata =
       typeof row.metadata === 'object' && row.metadata !== null ? row.metadata : {};
-    const timeZone =
-      typeof metadata.timeZone === 'string' ? metadata.timeZone : 'Europe/Warsaw';
-    if (formatDateInTimeZone(startAt, timeZone) !== this.formatDate(row.stay_start_date)) {
-      throw new BadRequestException(
-        'Ręcznie można zmienić godzinę rozpoczęcia, ale nie dzień przyjazdu',
-      );
-    }
-    if (formatDateInTimeZone(endAt, timeZone) !== this.formatDate(row.stay_end_date)) {
-      throw new BadRequestException(
-        'Ręcznie można zmienić godzinę zakończenia, ale nie dzień wyjazdu',
-      );
-    }
+    const error = manualAccessCodeWindowError({
+      startAt,
+      endAt,
+      stayStartDate: this.formatDate(row.stay_start_date),
+      stayEndDate: this.formatDate(row.stay_end_date),
+      timeZone: typeof metadata.timeZone === 'string' ? metadata.timeZone : 'Europe/Warsaw',
+    });
+    if (error) throw new BadRequestException(error);
   }
 
   private async confirmProviderPasscode(params: {

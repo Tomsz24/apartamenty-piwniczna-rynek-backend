@@ -44,6 +44,10 @@ export class HostexService {
     return this.client.sendMessage(conversationId, message);
   }
 
+  sendImage(conversationId: string, jpegBase64: string): Promise<{ requestId: string | null }> {
+    return this.client.sendImage(conversationId, jpegBase64);
+  }
+
   async listConversations(offset: number, limit: number) {
     return sanitizeHostexConversations(await this.client.getConversations(offset, limit), offset, limit);
   }

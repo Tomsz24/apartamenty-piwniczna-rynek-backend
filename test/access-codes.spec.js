@@ -14,6 +14,8 @@ const {
   formatDateInTimeZone,
   generateFourDigitCode,
   isAllowedFourDigitCode,
+  manualAccessCodeWindowError,
+  shouldApplyDefaultValidity,
 } = require('../dist/access-codes/access-codes.domain');
 const {
   AccessCodesOverviewQueryDto,
@@ -478,4 +480,75 @@ test('builds a lock overview from safe TTLock data and local apartment mappings'
     syncErrors: 0,
   });
   assert.equal(overview.locks[0].statistics.successfulPasscodeUnlocks, 8);
+});
+
+test('manual code windows may move days and hours but stay within a day of the stay', () => {
+  const stay = { stayStartDate: '2026-10-22', stayEndDate: '2026-10-24', timeZone: 'Europe/Warsaw' };
+  const at = (value) => new Date(value);
+  assert.equal(manualAccessCodeWindowError({
+    ...stay, startAt: at('2026-10-21T18:00:00+02:00'), endAt: at('2026-10-25T09:00:00+02:00'),
+  }), null);
+  assert.equal(manualAccessCodeWindowError({
+    ...stay, startAt: at('2026-10-22T09:00:00+02:00'), endAt: at('2026-10-23T11:00:00+02:00'),
+  }), null);
+  assert.match(manualAccessCodeWindowError({
+    ...stay, startAt: at('2026-10-20T12:00:00+02:00'), endAt: at('2026-10-24T11:00:00+02:00'),
+  }), /dzień przed przyjazdem/);
+  assert.match(manualAccessCodeWindowError({
+    ...stay, startAt: at('2026-10-22T12:00:00+02:00'), endAt: at('2026-11-24T11:00:00+01:00'),
+  }), /dzień po wyjeździe/);
+  // 23:30 UTC is already the next day in Warsaw.
+  assert.match(manualAccessCodeWindowError({
+    ...stay, startAt: at('2026-10-20T23:30:00Z'), endAt: at('2026-10-24T09:00:00Z'),
+  }) ?? '', /^$/);
+});
+
+test('keeps manual windows for the same stay and resets them once the stay moves', () => {
+  const manual = {
+    validitySource: 'manual_override',
+    overrideStayStartDate: '2026-10-22',
+    overrideStayEndDate: '2026-10-24',
+  };
+  assert.equal(shouldApplyDefaultValidity({ metadata: manual, stayStartDate: '2026-10-22', stayEndDate: '2026-10-24' }), false);
+  assert.equal(shouldApplyDefaultValidity({ metadata: manual, stayStartDate: '2026-10-22', stayEndDate: '2026-10-26' }), true);
+  assert.equal(shouldApplyDefaultValidity({ metadata: { validitySource: 'apartment_default' }, stayStartDate: '2026-10-22', stayEndDate: '2026-10-24' }), true);
+  assert.equal(shouldApplyDefaultValidity({ metadata: null, stayStartDate: '2026-10-22', stayEndDate: '2026-10-24' }), true);
+});
+
+test('date reconciliation follows extensions mid-stay but leaves manual windows alone', async () => {
+  const key = Buffer.alloc(32, 31).toString('base64');
+  const queries = [];
+  const rows = [
+    // Default code, stay extended from 24th to 26th while the guest is already there.
+    { id: 'default', version: 3, valid_from: '2026-10-22T10:00:00.000Z', valid_until: '2026-10-24T09:00:00.000Z',
+      metadata: { validitySource: 'apartment_default' }, start_date: '2026-10-22', end_date: '2026-10-26',
+      access_code_check_in_time: '12:00:00', access_code_check_out_time: '11:00:00', access_code_time_zone: 'Europe/Warsaw' },
+    // Manual early check-in for the unchanged stay: must survive.
+    { id: 'manual-same', version: 5, valid_from: '2026-10-22T07:00:00.000Z', valid_until: '2026-10-24T09:00:00.000Z',
+      metadata: { validitySource: 'manual_override', overrideStayStartDate: '2026-10-22', overrideStayEndDate: '2026-10-24' },
+      start_date: '2026-10-22', end_date: '2026-10-24',
+      access_code_check_in_time: '12:00:00', access_code_check_out_time: '11:00:00', access_code_time_zone: 'Europe/Warsaw' },
+    // Manual window, then the stay was shortened: back to the default for the new dates.
+    { id: 'manual-moved', version: 2, valid_from: '2026-10-22T07:00:00.000Z', valid_until: '2026-10-24T09:00:00.000Z',
+      metadata: { validitySource: 'manual_override', overrideStayStartDate: '2026-10-22', overrideStayEndDate: '2026-10-24' },
+      start_date: '2026-10-22', end_date: '2026-10-23',
+      access_code_check_in_time: '12:00:00', access_code_check_out_time: '11:00:00', access_code_time_zone: 'Europe/Warsaw' },
+  ];
+  const service = new AccessCodesService(
+    { query: async (text) => { queries.push(text); return { rows }; } },
+    { getStatus: () => ({ writesEnabled: true }) },
+    new AccessCodeCryptoService(new ConfigService({ ACCESS_CODE_ENCRYPTION_KEY: key })),
+    new ConfigService({}),
+  );
+  const updates = [];
+  service.updateWithValiditySource = async (id, dto, actor, source) => updates.push({ id, ...dto, source });
+
+  await service.reconcileChangedReservationDates();
+
+  assert.match(queries[0], /code\.valid_until > NOW\(\)/);
+  assert.doesNotMatch(queries[0], /<= reservation\.start_date/);
+  assert.deepEqual(updates, [
+    { id: 'default', validFrom: '2026-10-22T10:00:00.000Z', validUntil: '2026-10-26T10:00:00.000Z', expectedVersion: 3, source: 'apartment_default' },
+    { id: 'manual-moved', validFrom: '2026-10-22T10:00:00.000Z', validUntil: '2026-10-23T09:00:00.000Z', expectedVersion: 2, source: 'apartment_default' },
+  ]);
 });

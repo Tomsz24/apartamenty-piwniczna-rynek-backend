@@ -41,22 +41,44 @@ export class NotificationProducerService {
     }
   }
 
+  /**
+   * Escalating reminders while the arrival message is not marked as sent:
+   * first reminder (default 10:00), 13:00 and 15:00 (check-in). Only the latest
+   * reached stage is sent, so a restart never fires several at once. Channel
+   * stays get the message automatically at 10:00, so they start at 13:00.
+   */
   async enqueueArrivalReminders(): Promise<number> {
     const result = await this.pool.query(
       `INSERT INTO notification_events (
          dedupe_key, event_type, priority, apartment_id, reservation_id, title, body, payload
        )
-       SELECT 'arrival_message_reminder:' || reservation.id || ':' || reservation.start_date,
-              'arrival_message_reminder', 'normal', reservation.apartment_id, reservation.id,
-              'Wyślij wiadomość przyjazdową', notification_stay_label(reservation),
+       SELECT 'arrival_message_reminder:' || reservation.id || ':' || reservation.start_date || ':' || stage.n,
+              'arrival_message_reminder', stage.priority, reservation.apartment_id, reservation.id,
+              stage.title, notification_stay_label(reservation),
               jsonb_build_object('reservationId', reservation.id)
        FROM reservations AS reservation
        JOIN apartments AS apartment ON apartment.id = reservation.apartment_id
+       CROSS JOIN LATERAL (
+         SELECT step.n, step.priority, step.title
+         FROM (VALUES
+           (1, $1::time, 'normal', 'Wyślij wiadomość przyjazdową'),
+           (2, TIME '13:00', 'high', 'Wiadomość przyjazdowa nadal niewysłana'),
+           (3, TIME '15:00', 'critical', 'Gość może już być na miejscu — wyślij kod')
+         ) AS step(n, at, priority, title)
+         WHERE (NOW() AT TIME ZONE apartment.access_code_time_zone) >= reservation.start_date + step.at
+           AND NOT (
+             step.n = 1
+             AND reservation.origin = 'hostex'
+             AND reservation.metadata->>'conversationId' IS NOT NULL
+             AND COALESCE(reservation.metadata->>'channelType', 'hostex_direct') <> 'hostex_direct'
+           )
+         ORDER BY step.n DESC
+         LIMIT 1
+       ) AS stage
        WHERE reservation.status = 'confirmed'
          AND reservation.origin IN ('manual', 'hostex', 'booking_email')
          AND reservation.arrival_message_sent_at IS NULL
          AND reservation.start_date = (NOW() AT TIME ZONE apartment.access_code_time_zone)::date
-         AND (NOW() AT TIME ZONE apartment.access_code_time_zone) >= reservation.start_date + $1::time
        ON CONFLICT (dedupe_key) DO NOTHING`,
       [this.reminderTime],
     );

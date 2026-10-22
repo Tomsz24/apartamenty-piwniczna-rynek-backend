@@ -72,6 +72,11 @@ Pierwszy import przyszłych aktywnych rezerwacji po starcie generuje powiadomien
 Aktualizacje znaczników synchronizacji, metadata i wersji nie są zmianami pobytu.
 Zmiana notatki, danych gościa, ceny, płatności lub statusu jest zmianą pobytu.
 Anulowanie oznacza przejście statusu na `cancelled`; fizyczny DELETE nie jest obsługiwany.
+Każdy mail czeka 90 sekund przed wysyłką. Zmiany z tego czasu trafiają do maila,
+który jeszcze nie wyszedł: nowa rezerwacja z notatką dopisaną chwilę później daje
+jeden mail, a kilka szybkich edycji daje jeden mail „zmieniono” z różnicą obejmującą
+wszystkie zmiany. Rezerwacja utworzona i anulowana w tym oknie nie wysyła nic, a
+zmiany już anulowanej rezerwacji (np. wyzerowana cena z Hostex) nie wysyłają maila.
 Nie są wysyłane kody dostępu ani surowe dane dostawców.
 
 Kolejka jest niezależna od skrzynki powiadomień w aplikacji i preferencji push.
