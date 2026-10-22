@@ -27,7 +27,7 @@ Nie używamy `.env.development`, `APP_ENV` ani `DATABASE_HOST_EXPECTED`.
 | Hostex | `HOSTEX_ENABLED=true`, `HOSTEX_ACCESS_TOKEN`; automatyczny import: `HOSTEX_SYNC_ENABLED=true` |
 | Zapisy Hostex | `HOSTEX_WRITES_ENABLED=true` i token z uprawnieniami zapisu |
 | Webhook Hostex | `HOSTEX_WEBHOOK_SECRET` (sekret z Hostex) oraz `HOSTEX_ENABLED=true`; tylko na serwerze z publicznym HTTPS |
-| E-maile | `RESERVATION_EMAIL_ENABLED=true`, `RESEND_API_KEY`, `RESERVATION_EMAIL_FROM`, `RESERVATION_EMAIL_TO`, `RESERVATION_EMAIL_START_AT` |
+| E-maile | `RESERVATION_EMAIL_ENABLED=true`, `RESEND_API_KEY`, `RESERVATION_EMAIL_FROM`, `RESERVATION_EMAIL_TO` (jeden adres albo kilka po przecinku), `RESERVATION_EMAIL_START_AT` |
 | Zamki | `TTLOCK_ENABLED`, dane klienta i konta/tokenów; zapisy kontroluje `TTLOCK_WRITES_ENABLED` |
 | Powiadomienia push | `NOTIFICATIONS_ENABLED=true`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY_PATH` lub `APNS_PRIVATE_KEY`; opcjonalnie `APNS_BUNDLE_ID` |
 | Kody dostępu | `ACCESS_CODE_AUTOMATION_ENABLED`, skonfigurowany TTLock z zapisem oraz `ACCESS_CODE_ENCRYPTION_KEY` |

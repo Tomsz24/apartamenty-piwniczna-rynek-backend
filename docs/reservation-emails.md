@@ -58,7 +58,10 @@ Backend korzysta z jednego `.env`; szczegóły w `environment.md`.
    następnie anuluj ją. Oczekuj trzech maili na testowym Gmailu. Worker przetwarza
    jeden e-mail co 30 sekund na instancję backendu. Blokada właścicielska nie
    generuje wiadomości. Sprawdź też folder Spam.
-5. Po testach zmień `RESERVATION_EMAIL_TO` i zrestartuj backend. Wiadomości,
+5. Po testach zmień `RESERVATION_EMAIL_TO` i zrestartuj backend. Można podać
+   kilka adresów po przecinku (maks. 10); każdy dostaje osobny mail (wysyłka
+   zbiorcza Resend w jednym żądaniu z kluczem idempotencji) i nie widzi
+   pozostałych odbiorców. Wiadomości,
    których wysyłanie już rozpoczęto, zachowują poprzedniego odbiorcę dla
    bezpiecznego ponawiania. Najpierw opróżnij/sprawdź kolejkę testową.
 
