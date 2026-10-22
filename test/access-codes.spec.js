@@ -594,6 +594,7 @@ function recoveryHarness(row, ttlockOverrides = {}) {
     getStatus: () => ({ writesEnabled: true }),
     assertWritesAllowed: () => {},
     findPasscode: async () => null,
+    passcodeExists: async () => true,
     isPasscodeAvailable: async () => true,
     isPasscodeConfigured: async () => true,
     createPasscode: async () => {
@@ -636,4 +637,24 @@ test('recovery leaves a code that is still being written alone', async () => {
   const { service, calls } = recoveryHarness({ status: 'pending_create' });
   await assert.rejects(service.reconcile('code-1', recoveryActor), /w toku/);
   assert.deepEqual(calls, []);
+});
+
+test('recovering a delete whose answer got lost confirms the code is gone instead of retrying', async () => {
+  const { service, statuses, calls } = recoveryHarness(
+    { provider_passcode_id: '901', reservation_status: 'cancelled' },
+    {
+      passcodeExists: async () => false,
+      deletePasscode: async () => { throw new Error('TTLock: passcode does not exist'); },
+    },
+  );
+  await service.reconcile('code-1', recoveryActor);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(statuses, ['pending_delete', 'revoked']);
+});
+
+test('recovering a delete still removes a code that is on the lock', async () => {
+  const { service, statuses, calls } = recoveryHarness({ provider_passcode_id: '901', reservation_status: 'cancelled' });
+  await service.reconcile('code-1', recoveryActor);
+  assert.deepEqual(calls, ['delete']);
+  assert.deepEqual(statuses, ['pending_delete', 'revoked']);
 });

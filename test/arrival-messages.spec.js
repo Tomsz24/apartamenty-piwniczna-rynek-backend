@@ -85,7 +85,7 @@ function createPool(stay = STAY) {
     if (text.includes("WHERE status = 'sending' AND updated_at <")) {
       if (state.delivery?.status !== 'sending' || !state.delivery.stale) return { rowCount: 0, rows: [] };
       state.delivery.status = 'uncertain';
-      return { rowCount: 1, rows: [{ reservation_id: state.stay.id }] };
+      return { rowCount: 1, rows: [{ reservation_id: state.stay.id, stay_start_date: state.stay.start_date }] };
     }
     if (text.includes('UPDATE arrival_message_deliveries')) {
       Object.assign(state.delivery, { status: params[2], image_sent: params[3], last_error: params[4] });
@@ -252,8 +252,12 @@ test('a failure while preparing the text leaves the delivery retryable, not stuc
 test('the schedule turns an interrupted send into "uncertain" instead of leaving it stuck', async () => {
   const pool = createPool();
   pool.state.delivery = { status: 'sending', attempts: 1, image_sent: false, last_error: null, stale: true };
-  const wrapped = { query: async (text, params) => (text.includes('SELECT reservation.id') ? { rows: [] } : pool.query(text, params)) };
+  const wrapped = { query: async (text, params) => (text.includes('arrival_message_sent_at IS NULL') ? { rows: [] } : pool.query(text, params)) };
   const { service } = createService({ pool: wrapped });
   await service.handleScheduledSend();
   assert.equal(pool.state.delivery.status, 'uncertain');
+  assert.deepEqual(
+    pool.state.events.map((event) => [event.key, event.priority, event.title]),
+    [['arrival_message:res-1:2026-10-23:uncertain', 'critical', 'Sprawdź czat z gościem']],
+  );
 });

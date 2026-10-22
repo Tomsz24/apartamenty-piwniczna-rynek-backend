@@ -1041,7 +1041,9 @@ export class AccessCodesService {
       providerId ??= await this.ttlockService.findPasscode({ lockId, passcode, startAt, endAt });
 
       if (deleting) {
-        if (providerId) await this.ttlockService.deletePasscode(lockId, providerId);
+        // The earlier delete may have worked with its answer lost: only delete what is still there.
+        const onLock = providerId !== null && (await this.ttlockService.passcodeExists(lockId, providerId));
+        if (onLock) await this.ttlockService.deletePasscode(lockId, providerId!);
         await this.pool.query(
           `
             UPDATE reservation_access_codes
@@ -1053,7 +1055,7 @@ export class AccessCodesService {
         );
         await this.recordEvent(id, 'revoked', actor, {
           recovered: true,
-          foundOnLock: providerId !== null,
+          foundOnLock: onLock,
         });
         return this.getById(id);
       }
