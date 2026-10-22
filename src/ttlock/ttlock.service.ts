@@ -250,6 +250,14 @@ export class TtlockService {
     });
   }
 
+  /** Whether a passcode with this id is still on the lock; used to confirm a delete whose answer got lost. */
+  async passcodeExists(lockId: number, keyboardPwdId: number): Promise<boolean> {
+    const records = await this.listAllPages('/v3/lock/listKeyboardPwd', {
+      lockId: lockId.toString(),
+    });
+    return records.some((record) => this.asPositiveNumber(record.keyboardPwdId) === keyboardPwdId);
+  }
+
   /** Looks up a passcode on the lock by its value and validity window; used to recover after an unclear write. */
   async findPasscode(params: {
     lockId: number;

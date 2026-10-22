@@ -248,11 +248,23 @@ export class ArrivalMessagesService {
        SET status = 'uncertain', updated_at = NOW(),
            last_error = 'Wysyłka została przerwana — sprawdź w czacie, czy wiadomość doszła.'
        WHERE status = 'sending' AND updated_at < NOW() - make_interval(mins => $1)
-       RETURNING reservation_id`,
+       RETURNING reservation_id, stay_start_date::text AS stay_start_date`,
       [STALE_SENDING_MINUTES],
     );
     for (const row of stale.rows) {
       this.logger.warn(`Przerwana wysyłka wiadomości przyjazdowej (${row.reservation_id}) — wymaga sprawdzenia`);
+      try {
+        const stay = await this.loadStay(row.reservation_id);
+        // Automation will not touch it again, so the owner has to hear about it.
+        await this.notify(
+          { ...stay, startDate: row.stay_start_date },
+          'uncertain',
+          'Sprawdź czat z gościem',
+          'Wysyłka wiadomości przyjazdowej została przerwana — sprawdź w czacie, czy wiadomość doszła.',
+        );
+      } catch (error) {
+        this.logger.error(`Nie udało się powiadomić o przerwanej wysyłce (${row.reservation_id}): ${this.safe(error)}`);
+      }
     }
   }
 
