@@ -16,6 +16,7 @@ const PREFERENCE_BY_EVENT: Record<string, NotificationPreferenceKey> = {
   access_code_error: 'access_code_errors',
   access_code_missing: 'access_code_errors',
   arrival_message_reminder: 'arrival_message_reminder',
+  arrival_message_sent: 'arrival_message_reminder',
 };
 
 /** Preference column gating an event type; null means the event is always delivered. */

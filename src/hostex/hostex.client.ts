@@ -204,6 +204,13 @@ export class HostexClient {
     return { requestId: result.requestId };
   }
 
+  async sendImage(conversationId: string, jpegBase64: string): Promise<{ requestId: string | null }> {
+    const result = await this.write('POST', `/conversations/${encodeURIComponent(conversationId)}`, {
+      jpeg_base64: jpegBase64,
+    });
+    return { requestId: result.requestId };
+  }
+
   private async write(
     method: 'POST' | 'PATCH' | 'DELETE',
     path: string,

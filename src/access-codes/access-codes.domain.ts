@@ -223,3 +223,57 @@ function getZonedParts(value: Date, timeZone: string): LocalDateTimeParts {
     second: read('second'),
   };
 }
+
+/** How far a manually set code window may reach outside the stay, in days. */
+export const MANUAL_WINDOW_MARGIN_DAYS = 1;
+
+/**
+ * Manual code windows may move both the days and the hours, but must still
+ * overlap the stay and stay within one day of it — this catches typos such as a
+ * wrong month while allowing e.g. an early arrival the evening before.
+ * Returns an error message, or null when the window is acceptable.
+ */
+export function manualAccessCodeWindowError(params: {
+  startAt: Date;
+  endAt: Date;
+  stayStartDate: string;
+  stayEndDate: string;
+  timeZone: string;
+}): string | null {
+  const startDay = formatDateInTimeZone(params.startAt, params.timeZone);
+  const endDay = formatDateInTimeZone(params.endAt, params.timeZone);
+  if (startDay < shiftDate(params.stayStartDate, -MANUAL_WINDOW_MARGIN_DAYS)) {
+    return 'Kod może zaczynać się najwcześniej dzień przed przyjazdem';
+  }
+  if (endDay > shiftDate(params.stayEndDate, MANUAL_WINDOW_MARGIN_DAYS)) {
+    return 'Kod może kończyć się najpóźniej dzień po wyjeździe';
+  }
+  if (startDay > params.stayEndDate || endDay < params.stayStartDate) {
+    return 'Okres ważności kodu musi obejmować pobyt gościa';
+  }
+  return null;
+}
+
+/**
+ * Decides whether the automation should move a code to the apartment default
+ * window. Manual windows are kept as long as the stay dates they were set for
+ * still match the reservation; once the stay moves they no longer fit and the
+ * default window (recomputed from the new dates) takes over.
+ */
+export function shouldApplyDefaultValidity(params: {
+  metadata: Record<string, unknown> | null | undefined;
+  stayStartDate: string;
+  stayEndDate: string;
+}): boolean {
+  const metadata = params.metadata ?? {};
+  if (metadata.validitySource !== 'manual_override') return true;
+  return (
+    metadata.overrideStayStartDate !== params.stayStartDate ||
+    metadata.overrideStayEndDate !== params.stayEndDate
+  );
+}
+
+function shiftDate(date: string, days: number): string {
+  const { year, month, day } = parseDate(date);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}

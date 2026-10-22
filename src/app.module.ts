@@ -12,6 +12,7 @@ import { HostexModule } from './hostex/hostex.module';
 import { ApartmentsModule } from './apartments/apartments.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { StatisticsModule } from './statistics/statistics.module';
+import { ArrivalMessagesModule } from './arrival-messages/arrival-messages.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { StatisticsModule } from './statistics/statistics.module';
     ApartmentsModule,
     NotificationsModule,
     StatisticsModule,
+    ArrivalMessagesModule,
     HealthModule,
   ],
 })

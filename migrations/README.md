@@ -111,3 +111,14 @@ Migracja `20261021190000_ttlock_lock_mappings.sql` przypisuje zamki TTLock
 `19051854` (Widok na góry) i `19051822` (Widok na rynek) do apartamentów. Drzwi
 wejściowe mają stały kod i celowo nie są przypisywane. Istniejące przypisania
 nie są nadpisywane. Opis: `docs/access-codes-api.md`.
+
+Migracja `20261022090000_reservation_email_coalesce.sql` łączy maile o
+rezerwacjach: każdy mail czeka 90 sekund, a zmiany z tego czasu trafiają do maila,
+który jeszcze nie wyszedł (np. notatka dopisana zaraz po utworzeniu rezerwacji).
+Rezerwacja utworzona i anulowana w tym oknie nie wysyła nic, a zmiany anulowanej
+rezerwacji nie wysyłają maila o modyfikacji. Opis: `docs/reservation-emails.md`.
+
+Migracja `20261022100000_arrival_message_deliveries.sql` dodaje tabelę
+`arrival_message_deliveries` (jedna próba wysyłki wiadomości przyjazdowej przez
+czat Hostex na pobyt, bez treści i kodu) oraz typy powiadomień
+`arrival_message_sent` i `arrival_message_failed`. Opis: `docs/arrival-messages.md`.
