@@ -38,7 +38,11 @@ test('renders the template with the code and Warsaw validity, across the DST cha
     validUntil: new Date('2026-10-26T10:00:00Z'),
     timeZone: 'Europe/Warsaw',
   });
-  assert.match(text, /widokiem na góry\) to 0482\n/);
+  assert.match(text, /widokiem na góry\) to 0482#\n/);
+  // A template that already writes "#" after the code does not get a second one.
+  assert.equal(renderArrivalMessage('Kod: {{apartment_access_code}}#', {
+    accessCode: '0482', validFrom: new Date(), validUntil: new Date(), timeZone: 'Europe/Warsaw',
+  }), 'Kod: 0482#');
   assert.match(text, /Od 23\.10\.2026, godz\. 12:00\nDo 26\.10\.2026, godz\. 11:00$/);
   assert.match(text, /1407#/);
   assert.equal(hasUnfilledPlaceholders(text), false);
@@ -136,7 +140,7 @@ test('preview shows the rendered message, the map and that it will go out automa
   const preview = await service.preview('res-1');
   assert.equal(preview.channel, 'hostex_chat');
   assert.equal(preview.autoSend, true);
-  assert.match(preview.text, /to 0482/);
+  assert.match(preview.text, /to 0482#/);
   assert.equal(preview.mapImageUrl, 'https://example.supabase.co/storage/v1/object/public/arrival-message-assets/apartments-map.jpg');
   assert.equal(preview.missingReason, null);
 });
@@ -146,7 +150,7 @@ test('sends text then map, marks the stay as sent and notifies once', async (t) 
   const { service, pool, sent } = createService();
   const result = await service.sendViaHostex('res-1', 'automation');
   assert.deepEqual(sent.map((item) => Object.keys(item).sort()), [['conversationId', 'message'], ['conversationId', 'image']]);
-  assert.match(sent[0].message, /to 0482/);
+  assert.match(sent[0].message, /to 0482#/);
   assert.equal(pool.state.delivery.status, 'sent');
   assert.equal(pool.state.delivery.image_sent, true);
   assert.ok(result.sentAt);

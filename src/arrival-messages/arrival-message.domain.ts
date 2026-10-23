@@ -31,7 +31,13 @@ export function renderArrivalMessage(
     access_code_valid_until: formatValidity(values.validUntil, values.timeZone),
   };
   return template
-    .replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (match, key: string) => replacements[key] ?? match)
+    .replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (match, key: string, offset: number, text: string) => {
+      const value = replacements[key];
+      if (value === undefined) return match;
+      // The lock only accepts a code confirmed with "#"; add it unless the template already does.
+      if (key === 'apartment_access_code' && text[offset + match.length] !== '#') return `${value}#`;
+      return value;
+    })
     .trim();
 }
 
