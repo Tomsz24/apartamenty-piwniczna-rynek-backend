@@ -23,10 +23,19 @@ export function arrivalDeliveryChannel(params: {
 /** Fills the apartment template; returns null while a placeholder still has no value. */
 export function renderArrivalMessage(
   template: string,
-  values: { accessCode: string; validFrom: Date; validUntil: Date; timeZone: string },
+  values: {
+    accessCode: string;
+    validFrom: Date;
+    validUntil: Date;
+    timeZone: string;
+    arrivalDate?: string;
+    departureDate?: string;
+  },
 ): string {
   const replacements: Record<string, string> = {
     apartment_access_code: values.accessCode,
+    ...(values.arrivalDate ? { arrival_date: formatStayDate(values.arrivalDate) } : {}),
+    ...(values.departureDate ? { departure_date: formatStayDate(values.departureDate) } : {}),
     access_code_valid_from: formatValidity(values.validFrom, values.timeZone),
     access_code_valid_until: formatValidity(values.validUntil, values.timeZone),
   };
@@ -44,6 +53,8 @@ export function renderArrivalMessage(
 /** Fields an arrival template may use; the app shows them as a legend while editing. */
 export const ARRIVAL_TEMPLATE_PLACEHOLDERS = [
   { key: 'apartment_access_code', label: 'Kod do drzwi (z # na końcu)' },
+  { key: 'arrival_date', label: 'Data przyjazdu' },
+  { key: 'departure_date', label: 'Data wyjazdu' },
   { key: 'access_code_valid_from', label: 'Kod ważny od' },
   { key: 'access_code_valid_until', label: 'Kod ważny do' },
 ] as const;
@@ -70,6 +81,12 @@ export function arrivalTemplateError(body: string): string | null {
 
 export function hasUnfilledPlaceholders(text: string): boolean {
   return /\{\{\s*[a-z_]+\s*\}\}/.test(text);
+}
+
+/** "2026-10-23" (a stay date) as "23-10-2026". */
+export function formatStayDate(value: string): string {
+  const [year, month, day] = value.slice(0, 10).split('-');
+  return `${day}-${month}-${year}`;
 }
 
 /** "12:00 23-10-2026" in the apartment's time zone, as in the owner's own messages. */

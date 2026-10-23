@@ -61,7 +61,7 @@ test('only a Hostex rejection counts as certainly not sent', () => {
 });
 
 const STAY = {
-  id: 'res-1', status: 'confirmed', origin: 'hostex', start_date: '2026-10-23', guest_name: 'Anna',
+  id: 'res-1', status: 'confirmed', origin: 'hostex', start_date: '2026-10-23', end_date: '2026-10-25', guest_name: 'Anna',
   guest_phone: null, channel_type: 'booking.com', conversation_id: 'conv-1', arrival_message_sent_at: null,
   apartment_id: 'apt-1', access_code_time_zone: 'Europe/Warsaw', label: 'Góry · Anna · 23.10–25.10.2026',
   template_body: TEMPLATE, attachment_bucket_id: 'arrival-message-assets', attachment_path: 'apartments-map.jpg',
@@ -290,4 +290,13 @@ test('saving a template trims it and keeps the map attachment untouched', async 
   const upsert = queries.find((query) => query.text.includes('ON CONFLICT'));
   assert.doesNotMatch(upsert.text, /attachment/);
   await assert.rejects(service.saveTemplate('apt-1', 'bez kodu'), BadRequestException);
+});
+
+test('fixed hours with stay dates as fields, like the owner writes the message', async () => {
+  const template = 'Kod: {{apartment_access_code}}\nOd 15:00 {{arrival_date}}\nDo 10:00 {{departure_date}}';
+  const { service } = createService({ pool: createPool({ ...STAY, template_body: template }) });
+  const preview = await service.preview('res-1');
+  assert.equal(preview.text, 'Kod: 0482#\nOd 15:00 23-10-2026\nDo 10:00 25-10-2026');
+  const { arrivalTemplateError } = require('../dist/arrival-messages/arrival-message.domain');
+  assert.equal(arrivalTemplateError(template), null);
 });

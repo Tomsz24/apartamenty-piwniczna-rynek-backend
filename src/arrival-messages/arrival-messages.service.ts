@@ -46,6 +46,7 @@ type StayContext = {
   status: string;
   origin: string;
   startDate: string;
+  endDate: string;
   guestName: string | null;
   guestPhone: string | null;
   channelType: string | null;
@@ -281,6 +282,8 @@ export class ArrivalMessagesService {
       validFrom: new Date(code.validFrom),
       validUntil: new Date(code.validUntil),
       timeZone: stay.timeZone,
+      arrivalDate: stay.startDate,
+      departureDate: stay.endDate,
     });
     if (hasUnfilledPlaceholders(text)) {
       return { text: null, missingReason: 'Szablon zawiera nieznane pola do uzupełnienia' };
@@ -391,7 +394,8 @@ export class ArrivalMessagesService {
   private async loadStay(reservationId: string): Promise<StayContext> {
     const result = await this.pool.query(
       `SELECT reservation.id, reservation.status, reservation.origin,
-              reservation.start_date::text AS start_date, reservation.guest_name, reservation.guest_phone,
+              reservation.start_date::text AS start_date, reservation.end_date::text AS end_date,
+              reservation.guest_name, reservation.guest_phone,
               reservation.metadata->>'channelType' AS channel_type,
               reservation.metadata->>'conversationId' AS conversation_id,
               reservation.arrival_message_sent_at, reservation.apartment_id,
@@ -412,6 +416,7 @@ export class ArrivalMessagesService {
       status: row.status,
       origin: row.origin,
       startDate: row.start_date,
+      endDate: row.end_date,
       guestName: row.guest_name ?? null,
       guestPhone: row.guest_phone ?? null,
       channelType: row.channel_type ?? null,
