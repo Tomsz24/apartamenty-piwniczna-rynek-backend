@@ -46,7 +46,21 @@ export function sanitizeHostexConversation(data: unknown, conversationId: string
   const messages = Array.isArray(rawMessages)
     ? rawMessages.map((message, index) => sanitizeConversationMessage(message, index))
     : [];
-  return { ...summary, messages };
+  return { ...summary, messages: oldestFirst(messages) };
+}
+
+/** Hostex returns the newest message first; the chat reads top to bottom, oldest first. */
+function oldestFirst(messages: HostexConversationMessage[]): HostexConversationMessage[] {
+  const time = (message: HostexConversationMessage) =>
+    message.sentAt ? new Date(message.sentAt).getTime() : Number.NaN;
+  const dated = messages.filter((message) => !Number.isNaN(time(message)));
+  if (dated.length < messages.length) {
+    // Without dates on every message, trust Hostex's order: reverse it only if it runs newest-first.
+    const first = time(messages[0]);
+    const last = time(messages[messages.length - 1]);
+    return first > last ? [...messages].reverse() : messages;
+  }
+  return [...messages].sort((a, b) => time(a) - time(b));
 }
 
 function sanitizeConversation(value: unknown, index: number, fallbackId?: string): HostexConversationSummary {
@@ -113,12 +127,17 @@ function sanitizeConversationMessage(value: unknown, index: number): HostexConve
     .flatMap((attachment) => {
       if (typeof attachment === 'string') return [attachment];
       const item = asRecord(attachment);
-      const url = asNonEmptyString(item?.url ?? item?.file_url ?? item?.image_url);
+      // Hostex sends images as `attachment.fullback_url` (sic) on FileAttachment messages.
+      const url = asNonEmptyString(
+        item?.url ?? item?.file_url ?? item?.image_url ?? item?.fullback_url ?? item?.fallback_url,
+      );
       return url ? [url] : [];
     });
+  // A file message carries only a short placeholder as text; the attachment is the content.
+  const fileOnly = record.display_type === 'FileAttachment' && attachments.length > 0;
   return {
     id: asNonEmptyString(rawId) ?? `message-${index}`,
-    text,
+    text: fileOnly ? '' : text,
     isOutgoing,
     sentAt: asNullableDateTimeString(record.created_at ?? record.sent_at ?? record.timestamp ?? record.time),
     attachments,

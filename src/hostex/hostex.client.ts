@@ -33,6 +33,8 @@ export type HostexDirectReservationPayload = {
   channel_id: string;
 };
 
+
+const IMAGE_TIMEOUT_MS = 60_000;
 @Injectable()
 export class HostexClient {
   private readonly logger = new Logger(HostexClient.name);
@@ -205,9 +207,10 @@ export class HostexClient {
   }
 
   async sendImage(conversationId: string, jpegBase64: string): Promise<{ requestId: string | null }> {
+    // Hostex takes well over 10 s to process an image before it answers.
     const result = await this.write('POST', `/conversations/${encodeURIComponent(conversationId)}`, {
       jpeg_base64: jpegBase64,
-    });
+    }, IMAGE_TIMEOUT_MS);
     return { requestId: result.requestId };
   }
 
@@ -215,6 +218,7 @@ export class HostexClient {
     method: 'POST' | 'PATCH' | 'DELETE',
     path: string,
     body?: unknown,
+    timeoutMs = this.requestTimeoutMs,
   ): Promise<{ data: unknown; requestId: string | null }> {
     this.assertReady();
     if (!this.writesEnabled) {
@@ -225,7 +229,7 @@ export class HostexClient {
 
     const url = new URL(`${this.apiBaseUrl}${path}`);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
       response = await fetch(url, {

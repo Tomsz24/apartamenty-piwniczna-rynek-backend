@@ -76,6 +76,8 @@ export class ArrivalMessagesService {
   private readonly autoSendEnabled: boolean;
   private readonly supabaseUrl: string;
   private busy = false;
+  /** Pause before looking for the image in the chat; tests set it to 0. */
+  imageCheckDelayMs = 10_000;
 
   constructor(
     @Inject('PG_POOL') private readonly pool: Pool,
@@ -244,6 +246,7 @@ export class ArrivalMessagesService {
     );
     let imageSent = false;
     let imageError: string | null = null;
+    const imageStartedAt = Date.now();
     try {
       const image = await this.loadMapJpeg(stay);
       if (image) {
@@ -251,7 +254,13 @@ export class ArrivalMessagesService {
         imageSent = true;
       }
     } catch (error) {
-      imageError = `Mapka nie została wysłana: ${this.safe(error)}`;
+      // No answer is not a failure: Hostex often delivers the image anyway, so look in the chat.
+      if (classifyHostexSendError(error) === 'uncertain' &&
+          (await this.imageArrived(stay.conversationId, imageStartedAt))) {
+        imageSent = true;
+      } else {
+        imageError = `Mapka nie została wysłana: ${this.safe(error)}`;
+      }
     }
     await this.finish(stay, 'sent', imageSent, imageError);
     await this.notify(
@@ -375,6 +384,25 @@ export class ArrivalMessagesService {
         JSON.stringify({ reservationId: stay.id, conversationId: stay.conversationId }),
       ],
     );
+  }
+
+  /** Whether an image from us shows up in the chat since the send started (checked a few times). */
+  private async imageArrived(conversationId: string, since: number): Promise<boolean> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, this.imageCheckDelayMs));
+      try {
+        const conversation = await this.hostex.getConversation(conversationId);
+        const found = (conversation.messages ?? []).some((message) =>
+          message.isOutgoing &&
+          message.attachments.length > 0 &&
+          (!message.sentAt || new Date(message.sentAt).getTime() >= since - 60_000),
+        );
+        if (found) return true;
+      } catch {
+        // Checking is best effort; fall through to the next attempt.
+      }
+    }
+    return false;
   }
 
   private async loadMapJpeg(stay: StayContext): Promise<string | null> {

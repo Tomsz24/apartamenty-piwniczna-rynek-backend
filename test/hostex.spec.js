@@ -493,3 +493,30 @@ test('retries one transient Hostex read without duplicating any write', async ()
     global.fetch = originalFetch;
   }
 });
+
+test('shows Hostex image messages (fullback_url) as attachments without the placeholder text', () => {
+  const { sanitizeHostexConversation } = require('../dist/hostex/hostex.domain');
+  const result = sanitizeHostexConversation({
+    conversation: {
+      id: 'c1',
+      messages: [{
+        id: 'm1', sender_role: 'host', display_type: 'FileAttachment', content: '[Image]',
+        attachment: { origin_attachment_id: 'a1', type: 'image', fullback_url: 'https://oss.example.test/map.jpeg/xlarge' },
+        created_at: '2026-10-23T08:00:16+00:00',
+      }],
+    },
+  }, 'c1');
+  assert.deepEqual(result.messages[0].attachments, ['https://oss.example.test/map.jpeg/xlarge']);
+  assert.equal(result.messages[0].text, '');
+  assert.equal(result.messages[0].isOutgoing, true);
+});
+
+test('returns the chat history oldest first even though Hostex sends newest first', () => {
+  const { sanitizeHostexConversation } = require('../dist/hostex/hostex.domain');
+  const result = sanitizeHostexConversation({ conversation: { id: 'c1', messages: [
+    { id: 'new', sender_role: 'host', content: 'C', created_at: '2026-10-23T08:00:16+00:00' },
+    { id: 'mid', sender_role: 'host', content: 'B', created_at: '2026-10-23T08:00:01+00:00' },
+    { id: 'old', sender_role: 'guest', content: 'A', created_at: '2026-10-21T12:11:16+00:00' },
+  ] } }, 'c1');
+  assert.deepEqual(result.messages.map((message) => message.id), ['old', 'mid', 'new']);
+});
