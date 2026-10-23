@@ -265,3 +265,29 @@ test('the schedule turns an interrupted send into "uncertain" instead of leaving
     [['arrival_message:res-1:2026-10-23:uncertain', 'critical', 'Sprawdź czat z gościem']],
   );
 });
+
+test('a template must keep the door code and may only use known fields', () => {
+  const { arrivalTemplateError } = require('../dist/arrival-messages/arrival-message.domain');
+  assert.equal(arrivalTemplateError(TEMPLATE), null);
+  assert.match(arrivalTemplateError('   '), /pusty/);
+  assert.match(arrivalTemplateError('Dzień dobry, zapraszamy'), /apartment_access_code/);
+  assert.match(arrivalTemplateError('Kod {{apartment_access_code}} {{guest_name}}'), /guest_name/);
+});
+
+test('saving a template trims it and keeps the map attachment untouched', async () => {
+  const queries = [];
+  const pool = {
+    query: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('FROM apartments')) return { rows: [{}] };
+      return { rows: [{ body: params[1], updated_at: new Date('2026-10-23T07:00:00Z') }] };
+    },
+  };
+  const { service } = createService({ pool });
+  const saved = await service.saveTemplate('apt-1', '  Kod: {{apartment_access_code}}  ');
+  assert.equal(saved.body, 'Kod: {{apartment_access_code}}');
+  assert.equal(saved.placeholders[0].key, 'apartment_access_code');
+  const upsert = queries.find((query) => query.text.includes('ON CONFLICT'));
+  assert.doesNotMatch(upsert.text, /attachment/);
+  await assert.rejects(service.saveTemplate('apt-1', 'bez kodu'), BadRequestException);
+});

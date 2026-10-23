@@ -41,6 +41,33 @@ export function renderArrivalMessage(
     .trim();
 }
 
+/** Fields an arrival template may use; the app shows them as a legend while editing. */
+export const ARRIVAL_TEMPLATE_PLACEHOLDERS = [
+  { key: 'apartment_access_code', label: 'Kod do drzwi (z # na końcu)' },
+  { key: 'access_code_valid_from', label: 'Kod ważny od' },
+  { key: 'access_code_valid_until', label: 'Kod ważny do' },
+] as const;
+
+export const ARRIVAL_TEMPLATE_MAX_LENGTH = 4000;
+
+/** Why a template cannot be saved, or null when it is fine. */
+export function arrivalTemplateError(body: string): string | null {
+  const text = body.trim();
+  if (!text) return 'Szablon nie może być pusty';
+  if (text.length > ARRIVAL_TEMPLATE_MAX_LENGTH) {
+    return `Szablon może mieć najwyżej ${ARRIVAL_TEMPLATE_MAX_LENGTH} znaków`;
+  }
+  const known = new Set<string>(ARRIVAL_TEMPLATE_PLACEHOLDERS.map((item) => item.key));
+  const unknown = [...text.matchAll(/\{\{\s*([a-z_]+)\s*\}\}/g)]
+    .map((match) => match[1])
+    .filter((key) => !known.has(key));
+  if (unknown.length > 0) return `Nieznane pole: {{${unknown[0]}}}`;
+  if (!/\{\{\s*apartment_access_code\s*\}\}/.test(text)) {
+    return 'Szablon musi zawierać pole {{apartment_access_code}} — bez niego gość nie dostanie kodu';
+  }
+  return null;
+}
+
 export function hasUnfilledPlaceholders(text: string): boolean {
   return /\{\{\s*[a-z_]+\s*\}\}/.test(text);
 }

@@ -17,7 +17,16 @@ import {
   classifyHostexSendError,
   hasUnfilledPlaceholders,
   renderArrivalMessage,
+  ARRIVAL_TEMPLATE_PLACEHOLDERS,
+  arrivalTemplateError,
 } from './arrival-message.domain';
+
+export type ArrivalTemplate = {
+  apartmentId: string;
+  body: string;
+  updatedAt: string | null;
+  placeholders: { key: string; label: string }[];
+};
 
 export type ArrivalMessagePreview = {
   reservationId: string;
@@ -106,6 +115,47 @@ export class ArrivalMessagesService {
             updatedAt: new Date(row.updated_at).toISOString(),
           }
         : null,
+    };
+  }
+
+  async getTemplate(apartmentId: string): Promise<ArrivalTemplate> {
+    await this.assertApartment(apartmentId);
+    const result = await this.pool.query(
+      `SELECT body, updated_at FROM apartment_message_templates
+       WHERE apartment_id = $1 AND message_type = 'arrival'`,
+      [apartmentId],
+    );
+    return this.templateDto(apartmentId, result.rows[0]);
+  }
+
+  /** Replaces the arrival text; the map attachment and other settings stay as they are. */
+  async saveTemplate(apartmentId: string, body: string): Promise<ArrivalTemplate> {
+    const error = arrivalTemplateError(body);
+    if (error) throw new BadRequestException(error);
+    await this.assertApartment(apartmentId);
+    const result = await this.pool.query(
+      `INSERT INTO apartment_message_templates (apartment_id, message_type, body)
+       VALUES ($1, 'arrival', $2)
+       ON CONFLICT (apartment_id, message_type) DO UPDATE SET
+         body = EXCLUDED.body, is_active = true, updated_at = NOW()
+       RETURNING body, updated_at`,
+      [apartmentId, body.trim()],
+    );
+    this.logger.log(`Zmieniono szablon wiadomości przyjazdowej (${apartmentId})`);
+    return this.templateDto(apartmentId, result.rows[0]);
+  }
+
+  private async assertApartment(apartmentId: string): Promise<void> {
+    const result = await this.pool.query(`SELECT 1 FROM apartments WHERE id = $1`, [apartmentId]);
+    if (result.rows.length === 0) throw new NotFoundException('Apartament nie istnieje');
+  }
+
+  private templateDto(apartmentId: string, row?: { body: string; updated_at: Date }): ArrivalTemplate {
+    return {
+      apartmentId,
+      body: row?.body ?? '',
+      updatedAt: row ? new Date(row.updated_at).toISOString() : null,
+      placeholders: ARRIVAL_TEMPLATE_PLACEHOLDERS.map((item) => ({ ...item })),
     };
   }
 
