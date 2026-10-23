@@ -118,9 +118,11 @@ function createService({ pool = createPool(), code = { status: 'active', code: '
     {
       sendMessage: hostex.sendMessage ?? (async (conversationId, message) => { sent.push({ conversationId, message }); return {}; }),
       sendImage: hostex.sendImage ?? (async (conversationId, jpeg) => { sent.push({ conversationId, image: jpeg.length }); return {}; }),
+      getConversation: hostex.getConversation ?? (async () => ({ messages: [] })),
     },
     { get: (key) => ({ ARRIVAL_MESSAGE_AUTO_SEND_ENABLED: String(enabled), SUPABASE_URL: 'https://example.supabase.co/' })[key] },
   );
+  service.imageCheckDelayMs = 0;
   return { service, pool, sent };
 }
 
@@ -299,4 +301,31 @@ test('fixed hours with stay dates as fields, like the owner writes the message',
   assert.equal(preview.text, 'Kod: 0482#\nOd 15:00 23-10-2026\nDo 10:00 25-10-2026');
   const { arrivalTemplateError } = require('../dist/arrival-messages/arrival-message.domain');
   assert.equal(arrivalTemplateError(template), null);
+});
+
+test('a map that Hostex answers too late but shows up in the chat counts as sent', async (t) => {
+  stubMapFetch(t);
+  const { service, pool } = createService({
+    hostex: {
+      sendImage: async () => { throw new GatewayTimeoutException('Hostex nie potwierdził zmiany.'); },
+      getConversation: async () => ({ messages: [
+        { id: 'img', isOutgoing: true, text: '', attachments: ['https://oss.example.test/map.jpeg'], sentAt: new Date().toISOString() },
+      ] }),
+    },
+  });
+  await service.sendViaHostex('res-1', 'automation');
+  assert.equal(pool.state.delivery.status, 'sent');
+  assert.equal(pool.state.delivery.image_sent, true);
+  assert.equal(pool.state.delivery.last_error, null);
+  assert.equal(pool.state.events[0].title, 'Wysłano wiadomość przyjazdową');
+});
+
+test('a map that never shows up in the chat is still reported as missing', async (t) => {
+  stubMapFetch(t);
+  const { service, pool } = createService({
+    hostex: { sendImage: async () => { throw new GatewayTimeoutException('Hostex nie potwierdził zmiany.'); } },
+  });
+  await service.sendViaHostex('res-1', 'automation');
+  assert.equal(pool.state.delivery.image_sent, false);
+  assert.equal(pool.state.events[0].title, 'Wysłano wiadomość, ale bez mapki');
 });
