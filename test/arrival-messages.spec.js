@@ -43,13 +43,13 @@ test('renders the template with the code and Warsaw validity, across the DST cha
   assert.equal(renderArrivalMessage('Kod: {{apartment_access_code}}#', {
     accessCode: '0482', validFrom: new Date(), validUntil: new Date(), timeZone: 'Europe/Warsaw',
   }), 'Kod: 0482#');
-  assert.match(text, /Od 23\.10\.2026, godz\. 12:00\nDo 26\.10\.2026, godz\. 11:00$/);
+  assert.match(text, /Od 12:00 23-10-2026\nDo 11:00 26-10-2026$/);
   assert.match(text, /1407#/);
   assert.equal(hasUnfilledPlaceholders(text), false);
   assert.equal(hasUnfilledPlaceholders(renderArrivalMessage('Kod {{unknown_field}}', {
     accessCode: '1', validFrom: new Date(), validUntil: new Date(), timeZone: 'Europe/Warsaw',
   })), true);
-  assert.equal(formatValidity(new Date('2026-07-01T09:05:00Z'), 'Europe/Warsaw'), '01.07.2026, godz. 11:05');
+  assert.equal(formatValidity(new Date('2026-07-01T09:05:00Z'), 'Europe/Warsaw'), '11:05 01-07-2026');
 });
 
 test('only a Hostex rejection counts as certainly not sent', () => {

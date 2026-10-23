@@ -72,7 +72,7 @@ export function hasUnfilledPlaceholders(text: string): boolean {
   return /\{\{\s*[a-z_]+\s*\}\}/.test(text);
 }
 
-/** "23.10.2026, godz. 12:00" in the apartment's time zone. */
+/** "12:00 23-10-2026" in the apartment's time zone, as in the owner's own messages. */
 export function formatValidity(value: Date, timeZone: string): string {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('pl-PL', {
@@ -87,7 +87,7 @@ export function formatValidity(value: Date, timeZone: string): string {
       .formatToParts(value)
       .map((part) => [part.type, part.value]),
   );
-  return `${parts.day}.${parts.month}.${parts.year}, godz. ${parts.hour}:${parts.minute}`;
+  return `${parts.hour}:${parts.minute} ${parts.day}-${parts.month}-${parts.year}`;
 }
 
 /**
