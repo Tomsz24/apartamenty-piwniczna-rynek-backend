@@ -1,11 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
 import {
-  ApartmentCalendarDto,
   BookingDto,
   CalendarsResponseDto,
   CreateBookingDto,
   DeleteExternalBookingNoteDto,
+  PublicBookingDto,
+  PublicCalendarsResponseDto,
   UpdateBookingDto,
   UpsertExternalBookingNoteDto,
 } from './calendars.types';
@@ -20,23 +21,20 @@ export class CalendarsService {
   ) {}
 
   async getAllCalendars(): Promise<CalendarsResponseDto> {
-    const apartmentsResult = await this.pool.query(`
-      SELECT id, name
-      FROM apartments
-      ORDER BY name
-    `);
-
-    const apartments = apartmentsResult.rows;
-    const goryApartment = apartments.find((apartment) =>
-      apartment.name.toLowerCase().includes('góry'),
-    );
-    const rynekApartment = apartments.find((apartment) =>
-      apartment.name.toLowerCase().includes('rynek'),
-    );
-
+    const { gory, rynek } = await this.findCalendarApartments();
     const [goryCalendar, rynekCalendar] = await Promise.all([
-      this.getApartmentCalendar(goryApartment),
-      this.getApartmentCalendar(rynekApartment),
+      this.getApartmentCalendar(gory, (reservation) => this.mapBooking(reservation, false)),
+      this.getApartmentCalendar(rynek, (reservation) => this.mapBooking(reservation, false)),
+    ]);
+
+    return { gory: goryCalendar, rynek: rynekCalendar };
+  }
+
+  async getPublicCalendars(): Promise<PublicCalendarsResponseDto> {
+    const { gory, rynek } = await this.findCalendarApartments();
+    const [goryCalendar, rynekCalendar] = await Promise.all([
+      this.getApartmentCalendar(gory, (reservation) => this.mapPublicBooking(reservation)),
+      this.getApartmentCalendar(rynek, (reservation) => this.mapPublicBooking(reservation)),
     ]);
 
     return { gory: goryCalendar, rynek: rynekCalendar };
@@ -79,7 +77,24 @@ export class CalendarsService {
     await this.reservationsService.deleteNoteByExternalId(dto.apartmentId, dto.externalId);
   }
 
-  private async getApartmentCalendar(apartment: any): Promise<ApartmentCalendarDto> {
+  private async findCalendarApartments() {
+    const apartmentsResult = await this.pool.query(`
+      SELECT id, name
+      FROM apartments
+      ORDER BY name
+    `);
+
+    const apartments = apartmentsResult.rows;
+    return {
+      gory: apartments.find((apartment) => apartment.name.toLowerCase().includes('góry')),
+      rynek: apartments.find((apartment) => apartment.name.toLowerCase().includes('rynek')),
+    };
+  }
+
+  private async getApartmentCalendar<T>(
+    apartment: any,
+    mapBooking: (reservation: ReservationDto) => T,
+  ): Promise<{ apartmentId: string; apartmentName: string; bookings: T[] }> {
     if (!apartment) {
       return { apartmentId: '', apartmentName: 'Nieznany', bookings: [] };
     }
@@ -92,7 +107,23 @@ export class CalendarsService {
     return {
       apartmentId: apartment.id,
       apartmentName: apartment.name,
-      bookings: reservations.map((reservation) => this.mapBooking(reservation, false)),
+      bookings: reservations.map(mapBooking),
+    };
+  }
+
+  // Cleaning crew needs headcounts for bedding, but never guest identity or contact data.
+  private mapPublicBooking(reservation: ReservationDto): PublicBookingDto {
+    return {
+      id: reservation.id,
+      startDate: reservation.startDate,
+      endDate: reservation.endDate,
+      guestCount: reservation.guestCount,
+      adults: reservation.adults,
+      children: reservation.children,
+      childAges: reservation.childAges,
+      infants: reservation.infants,
+      pets: reservation.pets,
+      note: reservation.note,
     };
   }
 

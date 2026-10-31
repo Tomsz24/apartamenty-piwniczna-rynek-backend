@@ -129,6 +129,10 @@ treść odzyskaną z dawnego UID iCal.
 Dotychczasowe endpointy pozostają aktywne i korzystają już z nowego modelu:
 
 - `GET /api/calendars`
+- `GET /api/calendars/public` — publiczny podgląd dla ekipy sprzątającej (bez
+  logowania): `id`, `startDate`, `endDate`, liczby osób (`guestCount`,
+  `adults`, `children`, `childAges`, `infants`, `pets`) i `note`. Bez danych
+  identyfikujących gości (imię, telefon, e-mail, ID Hostex, płatności).
 - `POST /api/calendars/bookings`
 - `PUT /api/calendars/bookings/:id`
 - `DELETE /api/calendars/bookings/:id`
