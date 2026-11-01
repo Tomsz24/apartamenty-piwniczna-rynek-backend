@@ -29,6 +29,30 @@ export interface CalendarsResponseDto {
   rynek: ApartmentCalendarDto;
 }
 
+export interface PublicBookingDto {
+  id: string;
+  startDate: string;
+  endDate: string;
+  guestCount: number | null;
+  adults: number | null;
+  children: number | null;
+  childAges: number[] | null;
+  infants: number | null;
+  pets: number | null;
+  note: string | null;
+}
+
+export interface PublicApartmentCalendarDto {
+  apartmentId: string;
+  apartmentName: string;
+  bookings: PublicBookingDto[];
+}
+
+export interface PublicCalendarsResponseDto {
+  gory: PublicApartmentCalendarDto;
+  rynek: PublicApartmentCalendarDto;
+}
+
 export class CreateBookingDto extends CreateReservationDto {
   @IsOptional()
   @IsString()

@@ -18,6 +18,7 @@ import {
   CalendarsResponseDto,
   CreateBookingDto,
   DeleteExternalBookingNoteDto,
+  PublicCalendarsResponseDto,
   UpdateBookingDto,
   UpsertExternalBookingNoteDto,
 } from './calendars.types';
@@ -27,15 +28,21 @@ import { ReservationActor } from '../reservations/reservations.types';
 type AuthenticatedRequest = { user: ReservationActor };
 
 @Controller('calendars')
-@UseGuards(SupabaseAdminGuard)
 export class CalendarsController {
   constructor(
     private readonly calendarsService: CalendarsService,
   ) {}
 
   @Get()
+  @UseGuards(SupabaseAdminGuard)
   async getCalendars(): Promise<CalendarsResponseDto> {
     return this.calendarsService.getAllCalendars();
+  }
+
+  // Read-only view for the cleaning crew: dates and notes only, no guest data.
+  @Get('public')
+  async getPublicCalendars(): Promise<PublicCalendarsResponseDto> {
+    return this.calendarsService.getPublicCalendars();
   }
 
   @Post('bookings')
